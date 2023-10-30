@@ -1,0 +1,38 @@
+{
+  "method": "grid",
+  "parameters": {
+    "choco": { 
+      "value": "" 
+    },
+    "config": { 
+      "value": "" 
+    },
+    "evaluation": { 
+      "value": "" 
+    },
+    "encoding": { 
+      "value": "all-interval" 
+    },
+    "model": {
+      "value": "fasttext"
+    },
+    "batch_size": {
+      "value": 10240
+    },
+    "context": {
+        "values": [2, 3, 5, -1]
+    },
+    "negative_sampling_k": {
+      "values": [5, 20]
+    },
+    "embedding_dim": {
+      "values": [1, 2, 5, 10]
+    },
+    "embedding_aggr": {
+      "values": ["sum", "mean"]
+    },
+    "max_epochs": {
+      "values": [1, 5]
+    }
+  }
+}

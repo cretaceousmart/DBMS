@@ -1,0 +1,3 @@
+from pitchclass2vec.model.fasttext import FasttextModel, ScaledLossFasttextModel, EmbeddingWeightedFasttextModel, RNNWeightedFasttextModel
+from pitchclass2vec.model.word2vec import Word2vecModel
+from pitchclass2vec.model.rdf2vec import RandomWalkRdf2VecModel, WLWalkRdf2VecModel, HALKWalkRdf2VecModel

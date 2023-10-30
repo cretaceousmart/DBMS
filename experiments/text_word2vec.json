@@ -1,0 +1,32 @@
+{
+  "method": "grid",
+  "parameters": {
+    "choco": { 
+      "value": "" 
+    },
+    "config": { 
+      "value": "" 
+    },
+    "evaluation": { 
+      "value": "" 
+    },
+    "encoding": { 
+      "value": "text" 
+    },
+    "model": {
+      "value": "word2vec"
+    },
+    "context": {
+        "values": [2, 3, 5, 10000]
+    },
+    "negative_sampling_k": {
+      "values": [5, 20]
+    },
+    "embedding_dim": {
+      "values": [50, 100, 150, 200]
+    },
+    "max_epochs": {
+      "values": [1, 5]
+    }
+  }
+}

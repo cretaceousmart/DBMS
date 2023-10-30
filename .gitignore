@@ -1,0 +1,11 @@
+choco_dataset/
+choco-data-smaller/
+__pycache__/
+lightning_logs/
+wandb/
+out/
+results/
+best_models/
+.vscode/
+.ipynb_checkpoints/
+jie_test.ipynb

@@ -1,14 +1,11 @@
-# Use the official Python base image
-FROM python:3.9-slim
+# Use the official PyTorch base image with GPU support
+FROM pytorch/pytorch:latest
 
 # Set the working directory
 WORKDIR /app
 
-# Copy the project into the container
-COPY . /app
-
 # Install necessary build dependencies and clean up
-RUN apt-get update && apt-get install -y gcc python3-dev && apt-get clean
+RUN apt-get update && apt-get install -y gcc python3-dev git && apt-get clean
 
 # Copy and install Python dependencies
 COPY requirements.txt /app/requirements.txt

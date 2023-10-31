@@ -28,11 +28,16 @@ RUN python3 -m pip install --upgrade pip
 COPY requirements.txt requirements.txt
 RUN python3 -m pip install -r requirements.txt
 
-# Install PyTorch and torchvision
-RUN pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# Force Install attrs==23.1.0 and pyrdf2vec==0.2.3
+# Because the library restrition of pyrdf2vec is wrong
+RUN pip install attrs==23.1.0
+RUN pip install pyrdf2vec==0.2.3
+
+# Install Jupyter Notebook and IPython kernel
+RUN pip3 install jupyter ipykernel
 
 # Set the working directory
 WORKDIR /app
 
-# Set the entrypoint
-ENTRYPOINT [ "python3" ]
+# Start Jupyter Notebook Server
+CMD ["jupyter", "notebook", "--ip", "0.0.0.0", "--no-browser", "--allow-root"]

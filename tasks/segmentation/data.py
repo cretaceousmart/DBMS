@@ -122,7 +122,7 @@ class BillboardDataset(Dataset):
     Returns:
         Tuple[np.array, np.array]: The current item and the corresponding labels.
     """
-    chords, labels = self.datas
+    chords, labels = self.dataset[idx]
 
     
     embedded_chords = list()

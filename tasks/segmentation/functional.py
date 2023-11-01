@@ -73,9 +73,25 @@ class LSTMBaselineModel(pl.LightningModule):
     x, _ = self.lstm(x)
     x = self.classification(x)
     x = self.softmax(x)
-            
-    loss = nn.functional.binary_cross_entropy(x[mask != 0].float(), y[mask != 0].float())
+
+    try:
+        x, y, mask = batch
+        x, _ = self.lstm(x)
+        x = self.classification(x)
+        x = self.softmax(x)
+
+        print("Jie Log：x:", x.shape)
+        print("Jie Log：y:", y.shape)
+        print("Jie Log：mask:", mask.shape)
+        print("Jie Log：x[mask != 0].float() shape:", x[mask != 0].float().shape)
+        print("Jie Log：y[mask != 0].float() shape:", y[mask != 0].float().shape)
+
+        loss = nn.functional.binary_cross_entropy(x[mask != 0].float(), y[mask != 0].float())
     
+    except Exception as e:
+        print("An error occurred:", e)
+        raise e  # re-raise the error after printing it out
+
     return x, loss
 
   def _test(self, batch: Tuple[torch.tensor, torch.tensor, torch.tensor]) -> Tuple[torch.tensor, Dict[str, float]]:

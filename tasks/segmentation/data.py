@@ -42,14 +42,26 @@ OTHER_RE = re.compile(r"(modulation|key change)")
 
 
 class BillboardDataset(Dataset):
-  def __init__(self, pitchclass2vec):
+  def __init__(self, pitchclass2vec,test_mode = False):
     super().__init__()
     self.pitchclass2vec = pitchclass2vec
+    self.test_mode = test_mode
 
     billboard = mirdata.initialize('billboard')
     billboard.download()
+
+
+    # If in Test mode, only load 3 song for testing
+    if self.test_mode:
+      limit = 5
+      test_track_id = billboard.track_ids[0:limit]
+      test_tracks = {track_id: billboard.track(track_id) for track_id in test_track_id}
+      tracks = test_tracks
     
-    tracks = billboard.load_tracks()
+    # If not in Test mode
+    else:
+      tracks = billboard.load_tracks()
+
     self.dataset = list()
     labels = set()
 
@@ -75,7 +87,13 @@ class BillboardDataset(Dataset):
 
     # train the label encoder for each label
     self.label_encoder = OneHotEncoder().fit(np.array(list(labels)).reshape(-1, 1))
-    
+  
+  def load_track_with_limit(self,limit = 10):
+    """
+    This function is reference from load_tracks()
+    """
+    return {track_id: self.track(track_id) for track_id in self.track_ids[0:limit]}
+
   @staticmethod
   def preprocess_section(section: str) -> str:
     """
@@ -164,7 +182,7 @@ class BillboardDataset(Dataset):
 
 
 class SegmentationDataModule(pl.LightningDataModule):
-  def __init__(self, dataset_cls: Dataset, pitchclass2vec: Pitchclass2VecModel, batch_size: int = 32, test_size: float = 0.2, valid_size: float = 0.1):
+  def __init__(self, dataset_cls: Dataset, pitchclass2vec: Pitchclass2VecModel, batch_size: int = 32, test_size: float = 0.2, valid_size: float = 0.1, test_mode: bool = False):
     """
     Initialize the data module for the segmentation task.
 
@@ -184,12 +202,13 @@ class SegmentationDataModule(pl.LightningDataModule):
     self.valid_size = valid_size
     self.train_size = 1 - self.valid_size - self.test_size
     assert self.train_size + self.valid_size + self.test_size == 1.0
+    self.test_mode = test_mode
     
   def prepare_data(self):
     """
     Prepare the datasets by splitting data.
     """
-    dataset = self.dataset_cls(self.pitchclass2vec)
+    dataset = self.dataset_cls(self.pitchclass2vec, self.test_mode)
     self.train_dataset, self.test_dataset, self.valid_dataset = random_split(
       dataset, 
       [self.train_size, self.test_size, self.valid_size],

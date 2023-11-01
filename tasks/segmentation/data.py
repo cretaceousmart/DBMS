@@ -87,12 +87,6 @@ class BillboardDataset(Dataset):
 
     # train the label encoder for each label
     self.label_encoder = OneHotEncoder().fit(np.array(list(labels)).reshape(-1, 1))
-  
-  def load_track_with_limit(self,limit = 10):
-    """
-    This function is reference from load_tracks()
-    """
-    return {track_id: self.track(track_id) for track_id in self.track_ids[0:limit]}
 
   @staticmethod
   def preprocess_section(section: str) -> str:

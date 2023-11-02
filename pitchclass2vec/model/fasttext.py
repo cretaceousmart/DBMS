@@ -47,6 +47,7 @@ class FasttextModel(BaseModel):
   def training_step(self, batch: torch.Tensor, batch_idx: int) -> torch.nn.BCEWithLogitsLoss:
     """
     Perform a training step on the provided batch.
+    Target is a list of encoded chords
 
     Args:
         batch (torch.Tensor): The provided batch.

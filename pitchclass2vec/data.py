@@ -66,22 +66,32 @@ class ChocoDocumentDataset(torch.utils.data.Dataset):
     """
     Retrieve an item from the dataset and perform negative sampling on it.
     Duration for negative samples is randomly sampled from a normal distribution
-    whose meand and standard deviation are taken from the document duration
+    whose mean and standard deviation are taken from the document duration
     distribution.
 
     Args:
         idx (int): The item index.
 
     Returns:
-        Tuple[List[int], List[int], List[int], List[float]]: The current item, positive examples, negative examples and durations.
+        Tuple[List[int], List[int], List[int], List[float]]: The current item, positive examples, negative examples and durations.(TODO: this is wrong)
     """
     # retrieve the document index by finding the bucket in which the current index falls in
     bucket_idx = np.searchsorted(self._doc_buckets, idx, "right")
+
+    # Here, corpus is ChoCoDocument(chord = annotation, source=path, jams=jam)
+    #       doc is from [HarteAnnotation(obs.value, obs.duration) for obs in observations] (observation is the data in jams file)
+    #       For example:
+    #       [HarteAnnotation(symbol='A:min', duration=6.0),
+    #       HarteAnnotation(symbol='G:maj', duration=6.0),
+    #       ...]
     doc = np.array(self.corpus[bucket_idx - 1].annotations)
     doc_len = len(doc)
+
     # retrieve the by computing the relative position to the found bucket
     elem_idx = idx - self._doc_buckets[bucket_idx - 1]
 
+
+    # Calculate the index of positive sample
     # take the positive examples: i.e. those documents that falls within the context window
     if self.c == -1:
       # infinite context
@@ -91,32 +101,48 @@ class ChocoDocumentDataset(torch.utils.data.Dataset):
       right_context_elems = min(doc_len - elem_idx, self.c) # available right elements
       positive_idxs = np.arange(left_context_elems, right_context_elems) + elem_idx
 
+    # Calculate the index of Negative sample
     # negative examples are indexes that falls out of the positive indexes
     # based on https://tech.hbc.com/2018-03-23-negative-sampling-in-numpy.html
+    # Example: 
+      # positive_idxs: [45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55]
+      # pos_idxs_adj: [45 45 45 45 45 45 45 45 45 45 45]
+      # negative_idxs: [40, 41, 42, 43, 44, 50, 51, 52, 100]
+      # move_length:[ 0  0  0  0  0 11 11 11 11]
+      # negative_idxs: [ 40  41  42  43  44  61  62  63 111]
     num_negatives = len(self.vocab) - (2 * self.c + 1) if self.c != -1 else len(self.vocab)
     negative_idxs = np.random.randint(0, num_negatives, size=self.k)
     if self.c != -1:
       pos_idxs_adj = positive_idxs - np.arange(len(positive_idxs))
       negative_idxs = negative_idxs + np.searchsorted(pos_idxs_adj, negative_idxs, side='right')
     
-    # compute target as the set of encoded positives and negatives
-    # and compute the label y as 1 for positives and 0 for negatives
+
+    # Compute target as the set of encoded positives and negatives
     target = [ self.encode_chord(c) for c in doc[positive_idxs, 0] ]
     target += [ self.encode_chord(c) for c in self.vocab[negative_idxs] ]
     
+
+    # Compute the duratiion
     doc_durations = doc[:, 1].astype(float)
     duration = doc_durations[positive_idxs]
     duration = (duration - duration.min())/(duration.max() - duration.min()) \
                if duration.std() > 0 else np.ones_like(duration)
     duration = duration.tolist()
     duration += np.random.normal(doc_durations.mean(), doc_durations.std(), self.k).tolist()
-    
+
+
+    # Compute the label y as 1 for positives and 0 for negatives
+    # Example:
+    # positive_idxs: [45 46 47 48 49 50 51 52 53 54 55]  len(positive_idxs): 11
+    # negative_idxs: [65 66 67 68 69 70 71 72 73 74 75]  len(negative_idxs): 11
+    # y: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], len(y): 22
     y = list(repeat(1, len(positive_idxs))) + list(repeat(0, len(negative_idxs)))
 
-    # compute source as the repetition of the current chord over all the
-    # targets
+
+    # Compute the source, Repeat the current chord len(target) times, to make sure source and target have the same length
     source = list(repeat(self.encode_chord(doc[elem_idx, 0]), len(target)))
-    
+
+    # Return four item: the source, target, y, duration    
     return source, target, y, duration
 
   @staticmethod

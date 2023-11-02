@@ -112,10 +112,16 @@ class ChoCoValidHarteChordsCorpus(ChoCoCorpus):
     target_annotation_idx = namespaces.index(chord_namespace)
     annotation = jam.annotations[target_annotation_idx]
     observations = annotation.data
+
+    # Here, chords is a list, like this: 
+    # [HarteAnnotation(symbol='A:min', duration=6.0), HarteAnnotation(symbol='G:maj', duration=6.0)]
+    # It will be encoded by the specific encoder method (e.g. RootIntervalDataset)
+    # Then it will become a list of int, like this:
+    # [4, 2052, 132]
     chords = [HarteAnnotation(obs.value, obs.duration) for obs in observations]
     
     assert len(chords) > 10
-    [Harte(c.symbol) for c in chords]
+    # [Harte(c.symbol) for c in chords]
     return ChoCoDocument(chords, source=path, jams=jam)
 
 

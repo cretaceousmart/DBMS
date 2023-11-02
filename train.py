@@ -26,6 +26,10 @@ ENCODING_MAP = {
     "rdf": encoding.RDFChordsDataset,
 }
 
+
+
+# Here Model means Embeded model, but not the DL model (LSTM use as the base model in segmentation.py)
+# TODO: Figure out which model is pitchesclass2vec (the best model)
 MODEL_MAP = {
     "word2vec": model.Word2vecModel,
     "fasttext": model.FasttextModel,
@@ -85,6 +89,9 @@ def train_with_torch(choco, encoding, model, out, **kwargs):
     model_cls = MODEL_MAP[model]
     model = model_cls(**kwargs)
 
+
+    
+    # Check the loss for each epochm and save the model in /out, only save the best model (min loss)
     callbacks = [
         pl.callbacks.ModelCheckpoint(save_top_k=1,
                                     monitor="train/loss",
@@ -150,14 +157,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train pitchclass2vec embedding.")
     parser.add_argument("--choco", type=str, required=True)
     parser.add_argument("--out", type=str, required=True)
-    # parser.add_argument("--encoding", 
-    #                     choices=list(ENCODING_MAP.keys()), 
-    #                     required=True, 
-    #                     default="root-interval")
-    # parser.add_argument("--model", 
-    #                     choices=list(MODEL_MAP.keys()), 
-    #                     required=True, 
-    #                     default="fasttext")
     parser.add_argument("--encoding", 
                     choices=list(ENCODING_MAP.keys()), 
                         default="root-interval")

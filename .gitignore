@@ -4,9 +4,12 @@ __pycache__/
 lightning_logs/
 wandb/
 out/
+segmentation_out/
 results/
 best_models/
 .vscode/
 .ipynb_checkpoints/
 jie_test.ipynb
 jie_test_music/
+jie_backup
+pitchclass2vec/.cache/corpus.pickle

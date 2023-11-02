@@ -37,5 +37,11 @@ def chord_pitchclass(chord: str) -> List[int]:
         List[int]: Pitchclass of the chord
     """
     if chord not in pitchclasses:
-        pitchclasses[chord] = Harte(chord).pitchClasses
+        try:
+            if "/bb1" in chord:
+                chord = chord.replace("/bb1", "")
+            pitchclasses[chord] = Harte(chord).pitchClasses
+        except Exception as e:
+            print(f"Error processing chord {chord}: {e}")
+
     return pitchclasses[chord]

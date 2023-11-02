@@ -17,13 +17,15 @@ from gensim.models import Word2Vec, FastText
 
 
 ENCODING_MAP = {
-    "root-interval": encoding.RootIntervalDataset,
-    "timed-root-interval": encoding.TimedRootIntervalDataset,
-    "all-interval": encoding.AllIntervalDataset,
-    "timed-all-interval": encoding.TimedAllIntervalDataset,
+    "root-interval": encoding.RootIntervalDataset, # return source, target, y
+    "timed-root-interval": encoding.TimedRootIntervalDataset, # return source, target, y, duration
+    # "all-interval": encoding.AllIntervalDataset,
+    # "timed-all-interval": encoding.TimedAllIntervalDataset,
     "chord2vec": encoding.Chord2vecDataset,
-    "text": encoding.HarteTextDataset,
-    "rdf": encoding.RDFChordsDataset,
+
+    # The below encoding model may not useful for us
+    # "text": encoding.HarteTextDataset,
+    # "rdf": encoding.RDFChordsDataset,
 }
 
 
@@ -36,9 +38,11 @@ MODEL_MAP = {
     "scaled-loss-fasttext": model.ScaledLossFasttextModel,
     "emb-weighted-fasttext": model.EmbeddingWeightedFasttextModel,
     "rnn-weighted-fasttext": model.RNNWeightedFasttextModel,
-    "randomwalk-rdf2vec": model.RandomWalkRdf2VecModel,
-    "wlwalk-rdf2vec": model.WLWalkRdf2VecModel,
-    "halkwalk-rdf2vec": model.HALKWalkRdf2VecModel,
+
+    # The below embedding model may not useful for us
+    # "randomwalk-rdf2vec": model.RandomWalkRdf2VecModel,
+    # "wlwalk-rdf2vec": model.WLWalkRdf2VecModel,
+    # "halkwalk-rdf2vec": model.HALKWalkRdf2VecModel,
 }
 
 
@@ -76,8 +80,40 @@ def train_with_gensim(choco, encoding, model, out, **kwargs):
                 epochs=kwargs.get("max_epochs", 42))
             model.save(str(Path(out) / "model.ckpt"))
 
+def train_with_rdf2vec(choco, encoding, model, out, **kwargs):
+    data = ENCODING_MAP[encoding](choco)
+    model = MODEL_MAP[model](**kwargs)
+    model.train(data)
+    model.save(str(Path(out) / "model.ckpt"))
+
 
 def train_with_torch(choco, encoding, model, out, **kwargs):
+    # Initilize Weight&Bias
+    if not kwargs.get("disable_wandb", False):
+
+        wandb.init(
+            # Set the project where this run will be logged
+            project="pitchclass2vec", 
+            name=f"{ kwargs.get('wandb_run_name', 'None') }",
+            # Track hyperparameters and run metadata
+            config={
+                "encoding": encoding,
+                "embedding_model": model,
+                "batch_size": kwargs.get("batch_size",1024),
+                "context_size": kwargs.get("context_size",5),
+                "negative_sampling_k": kwargs.get("negative_sampling_k",20),
+            }
+        )
+        
+        # Config Weight&Bias
+        wandb.config.update({
+            "encoding": encoding,
+            "model": model,
+            **kwargs
+        })
+
+
+    # Data Preparation：
     dataset_cls = ENCODING_MAP[encoding]
     data = ChocoDataModule(
         choco,
@@ -86,21 +122,24 @@ def train_with_torch(choco, encoding, model, out, **kwargs):
         context_size=kwargs.get("context", 5),
         negative_sampling_k=kwargs.get("negative_sampling_k", 20))
 
+    # Model Initialization：
     model_cls = MODEL_MAP[model]
     model = model_cls(**kwargs)
 
-
-    
-    # Check the loss for each epochm and save the model in /out, only save the best model (min loss)
+    # Use callbacks of PyTorch Lightning
+    # Check the loss for each epoch and save the model in /out, only save the best model (min loss)
+    file_name = f"{kwargs.get('wandb_run_name', '')}"
     callbacks = [
         pl.callbacks.ModelCheckpoint(save_top_k=1,
                                     monitor="train/loss",
                                     mode="min",
                                     dirpath=out,
-                                    filename="model",
+                                    filename=file_name,
                                     every_n_epochs=1)
     ]
 
+
+    # Early stopping
     if kwargs.get("early_stop_patience", -1) != -1:
         callbacks.append(pl.callbacks.EarlyStopping(
             monitor="train/loss",
@@ -108,27 +147,19 @@ def train_with_torch(choco, encoding, model, out, **kwargs):
             patience=kwargs.get("early_stop_patience", 2)))
 
 
-    if not kwargs.get("disable_wandb", False):
-        logger = pl.loggers.WandbLogger(project="pitchclass2vec",
-                                        group=f"{encoding}_{model}")
-        callbacks.append(pl.callbacks.LearningRateMonitor(logging_interval="step"))
-    else:
-        logger = None
-
+    # Build trainer
     trainer = pl.Trainer(max_epochs=kwargs.get("max_epochs", 5),
                         accelerator="auto",
-                        logger=None if kwargs.get("disable_wandb", False) else logger,
+                        # logger=None if kwargs.get("disable_wandb", False) else logger,
+                        logger=None,
                         devices=1,
                         callbacks=callbacks)
 
     trainer.fit(model, datamodule=data)
 
+    wandb.save(str(Path(out) / f"{file_name}.ckpt"))
+        
 
-def train_with_rdf2vec(choco, encoding, model, out, **kwargs):
-    data = ENCODING_MAP[encoding](choco)
-    model = MODEL_MAP[model](**kwargs)
-    model.train(data)
-    model.save(str(Path(out) / "model.ckpt"))
 
 
 def train(choco, encoding, model, out, **kwargs):

@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 from sklearn.utils.class_weight import compute_sample_weight
+import wandb
 
 from pitchclass2vec.model.base import BaseModel
 
@@ -61,6 +62,7 @@ class FasttextModel(BaseModel):
     weight = compute_sample_weight("balanced", y.cpu())
     loss = nn.functional.binary_cross_entropy_with_logits(pred, y.float(), torch.tensor(weight).to(pred.device))
     self.log("train/loss", loss.item())
+    wandb.log({"train/loss": loss.item()})
     return loss
 
 
@@ -80,6 +82,7 @@ class ScaledLossFasttextModel(FasttextModel):
     pred = self._predict(source, target)
     loss = nn.functional.binary_cross_entropy_with_logits(pred, y.float(), duration)
     self.log("train/loss", loss.item())
+    wandb.log({"train/loss": loss.item()})
     return loss
 
 

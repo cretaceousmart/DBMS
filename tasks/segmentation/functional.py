@@ -1,13 +1,12 @@
 from typing import Tuple, Dict
-
 from collections import defaultdict
-
 from pytorch_lightning.utilities.seed import seed_everything
 import pytorch_lightning as pl
 import torch.nn as nn
 import torch
 from torchmetrics.functional import dice
 import numpy as np
+import wandb
 
 from mir_eval.util import boundaries_to_intervals
 from mir_eval.segment import pairwise, nce
@@ -80,11 +79,11 @@ class LSTMBaselineModel(pl.LightningModule):
         x = self.classification(x)
         x = self.softmax(x)
 
-        print("Jie Log：x:", x.shape)
-        print("Jie Log：y:", y.shape)
-        print("Jie Log：mask:", mask.shape)
-        print("Jie Log：x[mask != 0].float() shape:", x[mask != 0].float().shape)
-        print("Jie Log：y[mask != 0].float() shape:", y[mask != 0].float().shape)
+        # print("Jie Log：x:", x.shape)
+        # print("Jie Log：y:", y.shape)
+        # print("Jie Log：mask:", mask.shape)
+        # print("Jie Log：x[mask != 0].float() shape:", x[mask != 0].float().shape)
+        # print("Jie Log：y[mask != 0].float() shape:", y[mask != 0].float().shape)
 
         loss = nn.functional.binary_cross_entropy(x[mask != 0].float(), y[mask != 0].float())
     
@@ -145,7 +144,8 @@ class LSTMBaselineModel(pl.LightningModule):
         torch.tensor: The torch item loss.
     """
     _, loss = self._predict(batch)
-    self.log("train_loss", loss)
+    self.log("train/loss", loss.item())
+    wandb.log({"train/loss": loss})
     return loss
   
   def validation_step(self, batch: Tuple[torch.tensor, torch.tensor, torch.tensor], batch_idx: int) -> torch.tensor:
@@ -160,8 +160,9 @@ class LSTMBaselineModel(pl.LightningModule):
         torch.tensor: The torch item loss.
     """
     loss, metrics = self._test(batch)
-    self.log("val_loss", loss)
     for k, m in metrics.items(): self.log(f"val_{k}", m)
+    self.log("train/loss", loss.item())
+    wandb.log({"train/loss": loss})
     return loss
   
   def test_step(self, batch: Tuple[torch.tensor, torch.tensor, torch.tensor], batch_idx: int) -> torch.tensor:
@@ -176,8 +177,9 @@ class LSTMBaselineModel(pl.LightningModule):
         torch.tensor: The torch item loss.
     """
     loss, metrics = self._test(batch)        
-    self.log("test_loss", loss)
     for k, m in metrics.items(): self.log(f"test_{k}", m)
+    self.log("train/loss", loss.item())
+    wandb.log({"train/loss": loss})
     return loss
 
   def configure_optimizers(self) -> Dict:

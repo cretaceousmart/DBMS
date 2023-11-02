@@ -21,7 +21,8 @@ class ChoCoCorpus(object):
     """
     
     #TODO: moodify test jams to jams
-    self.data_path = osp.join(choco_data_path, "test_jams")
+    self.data_path = osp.join(choco_data_path, "jams")
+    print(f"Jie Log: data_path: {self.data_path}")
     
 
 

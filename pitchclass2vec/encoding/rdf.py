@@ -7,7 +7,7 @@ import pickle
 from functools import cache
 
 from rdflib import RDF, RDFS, URIRef, Graph
-from pyrdf2vec.graphs import KG
+# from pyrdf2vec.graphs import KG
 
 import numpy as np
 import torch

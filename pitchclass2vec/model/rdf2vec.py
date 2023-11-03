@@ -4,9 +4,9 @@ import pickle
 import numpy as np
 
 from pitchclass2vec.encoding.rdf import RDFChordsDataset
-from pyrdf2vec import RDF2VecTransformer
-from pyrdf2vec.embedders import Word2Vec
-from pyrdf2vec.walkers import RandomWalker, WLWalker, HALKWalker
+# from pyrdf2vec import RDF2VecTransformer
+# from pyrdf2vec.embedders import Word2Vec
+# from pyrdf2vec.walkers import RandomWalker, WLWalker, HALKWalker
 
 
 class BaseRdf2VecModel(object):

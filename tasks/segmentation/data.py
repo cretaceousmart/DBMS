@@ -226,6 +226,7 @@ class SegmentationDataModule(pl.LightningDataModule):
       collate_fn=self.dataset_cls.collate_fn,
       persistent_workers=True,
       prefetch_factor=20
+
     ) 
 
   def train_dataloader(self) -> DataLoader:

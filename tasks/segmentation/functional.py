@@ -27,12 +27,14 @@ class DiceLoss(nn.Module):
 
 class LSTMBaselineModel(pl.LightningModule):
   def __init__(self, 
+               segmentation_train_args: dict = None,
                embedding_dim: int = 10,
                hidden_size: int = 100, 
                dropout: float = 0.0,
                num_layers: int = 1, 
                num_labels: int = 11,
-               learning_rate: float = 0.001):
+               learning_rate: float = 0.001
+               ):
     """
     Model for the functional segmentation of a music piece.
 
@@ -55,6 +57,7 @@ class LSTMBaselineModel(pl.LightningModule):
                         batch_first=True)
     self.classification = nn.Linear(hidden_size * 2, num_labels)
     self.softmax = nn.Softmax(dim=2)
+    self.segmentation_train_args = segmentation_train_args
       
   def _predict(self, batch: Tuple[torch.tensor, torch.tensor, torch.tensor]) -> Tuple[torch.tensor, torch.tensor]:
     """
@@ -161,8 +164,8 @@ class LSTMBaselineModel(pl.LightningModule):
     """
     loss, metrics = self._test(batch)
     for k, m in metrics.items(): self.log(f"val_{k}", m)
-    self.log("train/loss", loss.item())
-    wandb.log({"train/loss": loss})
+    self.log("val/loss", loss.item())
+    wandb.log({"val/loss": loss})
     return loss
   
   def test_step(self, batch: Tuple[torch.tensor, torch.tensor, torch.tensor], batch_idx: int) -> torch.tensor:
@@ -178,8 +181,8 @@ class LSTMBaselineModel(pl.LightningModule):
     """
     loss, metrics = self._test(batch)        
     for k, m in metrics.items(): self.log(f"test_{k}", m)
-    self.log("train/loss", loss.item())
-    wandb.log({"train/loss": loss})
+    self.log("test/loss", loss.item())
+    wandb.log({"test/loss": loss})
     return loss
 
   def configure_optimizers(self) -> Dict:
@@ -191,11 +194,19 @@ class LSTMBaselineModel(pl.LightningModule):
         Dict: Optimizer configuration
     """
     optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, 
+            mode='min',
+            factor=self.segmentation_train_args.get("factor",0.1),
+            patience=self.segmentation_train_args.get("patience",5)
+            )
     return {
-        "optimizer": optimizer
+        "optimizer": optimizer,
+        "lr_scheduler": {
+            "scheduler": scheduler,
+            "monitor": "val/loss"
+        }
     }
-  
 
   #----- Add some function -----------------------------------------------------------------
 

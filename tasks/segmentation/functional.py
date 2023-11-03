@@ -58,7 +58,7 @@ class LSTMBaselineModel(pl.LightningModule):
     self.classification = nn.Linear(hidden_size * 2, num_labels)
     self.softmax = nn.Softmax(dim=2)
     self.segmentation_train_args = segmentation_train_args
-      
+
   def _predict(self, batch: Tuple[torch.tensor, torch.tensor, torch.tensor]) -> Tuple[torch.tensor, torch.tensor]:
     """
     Perform the prediction step in the specified batch. When computing the loss
@@ -95,6 +95,14 @@ class LSTMBaselineModel(pl.LightningModule):
         raise e  # re-raise the error after printing it out
 
     return x, loss
+
+  def evaluation_forward(self, x):
+        x, _ = self.lstm(x)
+        x = self.classification(x)
+        print(f"Result after classification:{x}")
+        y = self.softmax(x)
+        print(f"Result after softmax: {x}")
+        return (x,y)
 
   def _test(self, batch: Tuple[torch.tensor, torch.tensor, torch.tensor]) -> Tuple[torch.tensor, Dict[str, float]]:
     """

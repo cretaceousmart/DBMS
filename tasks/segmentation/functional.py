@@ -129,12 +129,19 @@ class LSTMBaselineModel(pl.LightningModule):
         
             yi = yi[mi != 0].argmax(axis=-1).cpu().numpy()
             _, yi = np.unique(yi, return_inverse=True)
-        
-            intervals = boundaries_to_intervals(np.arange(len(yi) + 1))
+
+            # Calculate the time interval, in our task there're len(yi) different interval
+            # e.g. when len(yi) = 2: intervals = [[0,1], [1,2]]
+            # Obviously in our task, pi and yi share the same interval
+            intervals = boundaries_to_intervals(np.arange(len(yi) + 1)) 
+            
+            # Calculate Precision, Recall Rate, F1-Score by using Agreement matrix
             precision, recall, f1 = pairwise(intervals, yi, intervals, pi)
             metrics["p_precision"].append(precision)
             metrics["p_recall"].append(recall)
             metrics["p_f1"].append(f1)
+
+            # Caslculate S_u (under-segmentation score), S_o (over-segmentation score), and F1 for them 
             over, under, under_over_f1 = nce(intervals, yi, intervals, pi)
             metrics["under"] = under
             metrics["over"] = over

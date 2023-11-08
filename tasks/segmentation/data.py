@@ -85,6 +85,10 @@ class BillboardDataset(Dataset):
       except Exception as e:
         print("Track", i, "not parsable")
 
+
+    print(f"-------------Jie Log: len(labels): {len(labels)}--------")  
+    print(f"-------------Jie Log: labels: {labels}--------")
+
     # train the label encoder for each label
     self.label_encoder = OneHotEncoder().fit(np.array(list(labels)).reshape(-1, 1))
 

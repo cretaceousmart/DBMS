@@ -30,7 +30,7 @@ def load_and_display(path, sampling_rate):
     return signal
 
 
-def computeFeature_Tempogram(signal, sampling_rate = 44100,hop_length_tempo = 256):
+def computeFeature_Tempogram(signal, sampling_rate = 22050,hop_length_tempo = 256):
     """ Use librosa to extract the Tempogram from raw signal"""
     # Compute the onset strength
     
@@ -60,22 +60,47 @@ def computeFeature_Tempogram(signal, sampling_rate = 44100,hop_length_tempo = 25
     return tempogram
 
 
-def get_sum_of_cost(algo, n_bkps) -> float:
-    """Return the sum of costs for the change points `bkps`"""
-    bkps = algo.predict(n_bkps=n_bkps)
+def computeFeature_FourierTempogram(signal, sampling_rate = 22050,hop_length_tempo = 256):
+    """ Use librosa to extract the Tempogram from raw signal"""
+    # Compute the onset strength
+    
+    oenv = librosa.onset.onset_strength(
+        y=signal, sr=sampling_rate, hop_length=hop_length_tempo
+    )
+    # Compute the tempogram
+    tempogram = librosa.feature.tempogram(
+        onset_envelope=oenv,
+        sr=sampling_rate,
+        hop_length=hop_length_tempo,
+    )
+
+    print(tempogram)
+
+    # Display the tempogram
+    fig, ax = fig_ax()
+    _ = librosa.display.specshow(
+        tempogram,
+        ax=ax,
+        hop_length=hop_length_tempo,
+        sr=sampling_rate,
+        x_axis="s",
+        y_axis="tempo",
+    )
+
+    return tempogram
+
+
+
+def get_sum_of_cost(algo,bkps) -> float:
+    """Return the sum of costs for the change points `n_bkps`"""
     return algo.cost.sum_of_costs(bkps)
 
-def obtain_loss():
-    """Calculate the loss for specific algroithm and number of Segmentation"""
-    pass
-
-
-def computeSegmentation_and_display(extracted_data, algo, num_optimal_seg, sampling_rate=44100, hop_length_tempo=256):
+def computeSegmentation_and_display(extracted_data, algo, num_optimal_seg, sampling_rate=22050, hop_length_tempo=256):
     """
     Args: 
         extracted_data: feature that extract from raw signal(e.g. tempograh that extracted by librosa)
         algo: change detection algo (e.g. linear kernel method from ruptures)
-        sampling_rate: how many sample per second, 44100 as default
+        sampling_rate: how many sample per second, 22050 as default (as Librosa dose)
         hop_length_tempo: calculate onset strength per 'hop_length_tempo' sample
 
     Return:
@@ -84,6 +109,10 @@ def computeSegmentation_and_display(extracted_data, algo, num_optimal_seg, sampl
     
     # Segmentation
     bkps = algo.predict(n_bkps=num_optimal_seg)
+
+    # Obtain the cost (loss)
+    cost = get_sum_of_cost(algo, bkps)
+    print(f"Cost: {cost}")
     # Convert the estimated change points (frame counts) to actual timestamps
     bkps_times = librosa.frames_to_time(bkps, sr=sampling_rate, hop_length=hop_length_tempo)
 
@@ -107,7 +136,7 @@ def computeSegmentation_and_display(extracted_data, algo, num_optimal_seg, sampl
 
 
 
-def obtain_segmentation_time(audio_path, num_optimal_seg, algo_type = "kernel",algo_name = "linear_kernel", sampling_rate=22050, hop_length_tempo = 256):
+def obtain_segmentation_time(audio_path, num_optimal_seg, algo_type,algo_name, sampling_rate=22050, hop_length_tempo = 256):
     """
     At the moment, choose Tempogram as the feature that we extract from raw signal
     """
@@ -119,10 +148,11 @@ def obtain_segmentation_time(audio_path, num_optimal_seg, algo_type = "kernel",a
     start_time = time.time()
     tempogram = computeFeature_Tempogram(signal, sampling_rate)
     
+    print(f"Algo Type: {algo_type}, Algo Name: {algo_name}")
     if algo_type == "kernel":
         if algo_name == "linear_kernel":
             algo = rpt.KernelCPD(kernel="linear").fit(tempogram.T)
-        else:
+        else:   
             algo = rpt.KernelCPD(kernel="rbf").fit(tempogram.T)
     else:
         algo = rpt.Dynp(model="l2").fit(tempogram.T)
@@ -138,14 +168,14 @@ def obtain_segmentation_time(audio_path, num_optimal_seg, algo_type = "kernel",a
     bkps_times = computeSegmentation_and_display(tempogram, algo, num_optimal_seg, sampling_rate=sampling_rate, hop_length_tempo=hop_length_tempo)
     end_time = time.time()
     total_time = end_time - start_time
-    print(f"The Algo spend {total_time:.2f} to get the segmentation time points")
+    print(f"The Algo spend {total_time:.2f} seconds to get the segmentation time points")
 
-    return bkps_times
-
-
+    return signal, sampling_rate, bkps_times
 
 
-def output(signal,bkps_times,sampling_rate=44100):
+
+
+def output(signal,bkps_times,sampling_rate=22050):
     # Compute change points corresponding indexes in original signal
     bkps_time_indexes = (sampling_rate * bkps_times).astype(int).tolist()
     print(f"bkps_time_indexes: {bkps_time_indexes}")

@@ -82,12 +82,6 @@ class LSTMBaselineModel(pl.LightningModule):
         x = self.classification(x)
         x = self.softmax(x)
 
-        # print("Jie Log：x:", x.shape)
-        # print("Jie Log：y:", y.shape)
-        # print("Jie Log：mask:", mask.shape)
-        # print("Jie Log：x[mask != 0].float() shape:", x[mask != 0].float().shape)
-        # print("Jie Log：y[mask != 0].float() shape:", y[mask != 0].float().shape)
-
         loss = nn.functional.binary_cross_entropy(x[mask != 0].float(), y[mask != 0].float())
     
     except Exception as e:
@@ -236,7 +230,6 @@ import scipy.special
 import sys
 sys.path.append("/app/mir_eval_simple/")
 import mir_eval_simple_utils
-
 
 
 

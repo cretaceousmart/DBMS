@@ -13,7 +13,7 @@ import pitchclass2vec.encoding as encoding
 import pitchclass2vec.model as model
 from pitchclass2vec.pitchclass2vec import Pitchclass2VecModel, MetaPitchclass2VecModel
 from gensim_evaluations.methods import odd_one_out
-from train import MODEL_MAP, ENCODING_MAP
+from tasks.train_embedding_model.embedding_train import MODEL_MAP, ENCODING_MAP
 from gensim.models import KeyedVectors
 from evaluate import load_pitchclass2vec_model
 

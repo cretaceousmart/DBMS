@@ -11,8 +11,22 @@ import pitchclass2vec.encoding as encoding
 import pitchclass2vec.model as model
 from pitchclass2vec.pitchclass2vec import Pitchclass2VecModel
 from gensim_evaluations.methods import OddOneOut
-from train import MODEL_MAP, ENCODING_MAP
+# from tasks.train_embedding_model.embedding_train import MODEL_MAP, ENCODING_MAP
 from gensim.models import KeyedVectors
+
+ENCODING_MAP = {
+    "root-interval": encoding.RootIntervalDataset, # return source, target, y
+    "timed-root-interval": encoding.TimedRootIntervalDataset, # return source, target, y, duration
+    "chord2vec": encoding.Chord2vecDataset,
+}
+
+EMBEDDING_MODEL_MAP = {
+    "word2vec": model.Word2vecModel,
+    "fasttext": model.FasttextModel,
+    "scaled-loss-fasttext": model.ScaledLossFasttextModel,
+    "emb-weighted-fasttext": model.EmbeddingWeightedFasttextModel,
+    "rnn-weighted-fasttext": model.RNNWeightedFasttextModel,
+}
 
 def load_pitchclass2vec_model(encoding: str, model: str, path: str):
     if encoding == "text":
@@ -24,7 +38,7 @@ def load_pitchclass2vec_model(encoding: str, model: str, path: str):
             model.has_index_for = lambda _: True
     else:
         model = Pitchclass2VecModel(ENCODING_MAP[encoding], 
-                                    MODEL_MAP[model],
+                                    EMBEDDING_MODEL_MAP[model],
                                     path)
     return model
 

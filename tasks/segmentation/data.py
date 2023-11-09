@@ -42,10 +42,11 @@ OTHER_RE = re.compile(r"(modulation|key change)")
 
 
 class BillboardDataset(Dataset):
-  def __init__(self, pitchclass2vec,test_mode = False):
+  def __init__(self, pitchclass2vec,test_mode = False, full_chord = True):
     super().__init__()
     self.pitchclass2vec = pitchclass2vec
     self.test_mode = test_mode
+    self.full_chord = full_chord
 
     billboard = mirdata.initialize('billboard')
     billboard.download()
@@ -71,12 +72,20 @@ class BillboardDataset(Dataset):
         sections = track.named_sections.labels
 
         # adjust chord intervals to match
-        chord_intervals, chords = adjust_intervals(track.chords_full.intervals, 
-                                                  labels=track.chords_full.labels, 
-                                                  t_min=section_intervals.min(), 
-                                                  t_max=section_intervals.max(), 
-                                                  start_label="N", 
-                                                  end_label="N")
+        if self.full_chord:
+          chord_intervals, chords = adjust_intervals(track.chords_full.intervals, 
+                                                    labels=track.chords_full.labels, 
+                                                    t_min=section_intervals.min(), 
+                                                    t_max=section_intervals.max(), 
+                                                    start_label="N", 
+                                                    end_label="N")
+        else:
+          chord_intervals, chords = adjust_intervals(track.chords_majmin.intervals, 
+                                                    labels=track.chords_majmin.labels, 
+                                                    t_min=section_intervals.min(), 
+                                                    t_max=section_intervals.max(), 
+                                                    start_label="N", 
+                                                    end_label="N")
 
         _, sections, chords = merge_labeled_intervals(section_intervals, sections, chord_intervals, chords)
         preprocessed_labels = [self.preprocess_section(s) for s in sections]
@@ -176,7 +185,9 @@ class BillboardDataset(Dataset):
 
 
 class SegmentationDataModule(pl.LightningDataModule):
-  def __init__(self, dataset_cls: Dataset, pitchclass2vec: Pitchclass2VecModel, batch_size: int = 32, test_size: float = 0.2, valid_size: float = 0.1, test_mode: bool = False):
+  def __init__(self, dataset_cls: Dataset, pitchclass2vec: Pitchclass2VecModel, batch_size: int = 32, test_size: float = 0.2, valid_size: float = 0.1, 
+               test_mode: bool = False,
+               full_chord: bool = False):
     """
     Initialize the data module for the segmentation task.
 
@@ -197,12 +208,13 @@ class SegmentationDataModule(pl.LightningDataModule):
     self.train_size = 1 - self.valid_size - self.test_size
     assert self.train_size + self.valid_size + self.test_size == 1.0
     self.test_mode = test_mode
+    self.full_chord = full_chord
     
   def prepare_data(self):
     """
     Prepare the datasets by splitting data.
     """
-    dataset = self.dataset_cls(self.pitchclass2vec, self.test_mode)
+    dataset = self.dataset_cls(self.pitchclass2vec, self.test_mode, self.full_chord)
     self.train_dataset, self.test_dataset, self.valid_dataset = random_split(
       dataset, 
       [self.train_size, self.test_size, self.valid_size],

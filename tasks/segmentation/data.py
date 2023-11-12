@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List, Tuple, Union
 
 from tqdm import tqdm
 import re
@@ -22,6 +22,7 @@ from harte.harte import Harte
 
 from pitchclass2vec.data import ChocoChordDataset
 from pitchclass2vec.pitchclass2vec import Pitchclass2VecModel
+from pitchclass2vec.pitchclass2vec import NaiveEmbeddingModel
 
 SYMBOLS_RE = re.compile("[" + re.escape(string.punctuation) + "]")
 NUMBERS_RE = re.compile("[" + re.escape(string.digits) + "]")
@@ -42,9 +43,9 @@ OTHER_RE = re.compile(r"(modulation|key change)")
 
 
 class BillboardDataset(Dataset):
-  def __init__(self, pitchclass2vec,test_mode = False, full_chord = True):
+  def __init__(self, embedding_model,test_mode = False, full_chord = True):
     super().__init__()
-    self.pitchclass2vec = pitchclass2vec
+    self.embedding_model = embedding_model
     self.test_mode = test_mode
     self.full_chord = full_chord
 
@@ -145,17 +146,22 @@ class BillboardDataset(Dataset):
     """
     chords, labels = self.dataset[idx]
 
-    
+    print(f"Jie log: len(chords): {len(chords)}, len(labels):{len(labels)} ")
+    print(f"Jie log: chord: {chords}, labels: {labels}")
+
+
     embedded_chords = list()
     for c in chords:
       try:
-        embedded_chords.append(self.pitchclass2vec[c])
+        embedded_chords.append(self.embedding_model[c])    
       except:
-        embedded_chords.append(self.pitchclass2vec["N"])
+        embedded_chords.append(self.embedding_model["N"])
+    print(f"Jie Log: len(embedded_chords): {len(embedded_chords)}")
     chords = np.array(embedded_chords)
         
     labels = self.label_encoder.transform(np.array(labels).reshape(-1, 1)).toarray()
     return chords, labels 
+  
   @staticmethod
   def collate_fn(sample: Tuple[np.array, np.array]) -> Tuple[torch.tensor, torch.tensor, torch.tensor]:
     """
@@ -185,7 +191,10 @@ class BillboardDataset(Dataset):
 
 
 class SegmentationDataModule(pl.LightningDataModule):
-  def __init__(self, dataset_cls: Dataset, pitchclass2vec: Pitchclass2VecModel, batch_size: int = 32, test_size: float = 0.2, valid_size: float = 0.1, 
+  def __init__(self, 
+               dataset_cls: Dataset, 
+               embedding_model: Union[Pitchclass2VecModel, NaiveEmbeddingModel], 
+               batch_size: int = 32, test_size: float = 0.2, valid_size: float = 0.1, 
                test_mode: bool = False,
                full_chord: bool = False):
     """
@@ -201,7 +210,7 @@ class SegmentationDataModule(pl.LightningDataModule):
     super().__init__()
     self.dataset_cls = dataset_cls
     self.batch_size = batch_size
-    self.pitchclass2vec = pitchclass2vec
+    self.embedding_model = embedding_model
     
     self.test_size = test_size
     self.valid_size = valid_size
@@ -214,11 +223,12 @@ class SegmentationDataModule(pl.LightningDataModule):
     """
     Prepare the datasets by splitting data.
     """
-    dataset = self.dataset_cls(self.pitchclass2vec, self.test_mode, self.full_chord)
+    dataset = self.dataset_cls(self.embedding_model, self.test_mode, self.full_chord)
+
     self.train_dataset, self.test_dataset, self.valid_dataset = random_split(
-      dataset, 
-      [self.train_size, self.test_size, self.valid_size],
-      generator=torch.Generator().manual_seed(42))
+            dataset, 
+            [self.train_size, self.test_size, self.valid_size],
+            generator=torch.Generator().manual_seed(42))
 
   def build_dataloader(self, dataset: Dataset, shuffle: bool = True) -> DataLoader:
     """

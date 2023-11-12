@@ -59,23 +59,14 @@ class LSTMBaselineModel(BaseModel):
             Tuple[torch.tensor, torch.tensor]: The prediction and the loss item
         """
         x, y, mask = batch
+        x = x.float()
         x, _ = self.lstm(x)
         x = self.classification(x)
         x = self.softmax(x)
 
-        try:
-            x, y, mask = batch
-            x, _ = self.lstm(x)
-            x = self.classification(x)
-            x = self.softmax(x)
+        loss = nn.functional.binary_cross_entropy(x[mask != 0].float(), y[mask != 0].float())
 
-            loss = nn.functional.binary_cross_entropy(x[mask != 0].float(), y[mask != 0].float())
-        
-        except Exception as e:
-            print("An error occurred:", e)
-            raise e  # re-raise the error after printing it out
-
-        return x, loss # return pred and loss
+        return x, loss
 
 
     def evaluation_forward(self, x):

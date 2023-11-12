@@ -11,6 +11,7 @@ from tasks.segmentation.deeplearning_models.lstm import LSTMBaselineModel
 
 import pitchclass2vec.model as model
 import pitchclass2vec.encoding as encoding
+from pitchclass2vec.pitchclass2vec import NaiveEmbeddingModel
 
 from evaluate import load_pitchclass2vec_model
 import argparse
@@ -46,26 +47,36 @@ def train(exp_args, segmentation_train_args):
     segmentation_out = segmentation_train_args.get("out")
     if not os.path.exists(segmentation_out): os.makedirs(segmentation_out)
 
-    encoder, embedding_model = exp_args.get("encoder"), exp_args.get("embedding_model")
-    embedding_model_path = exp_args.get("embedding_model_path")
-    
-
+    # Use advance embedding model to convert chord string into vector
+    if segmentation_train_args.get("use_pitchclass2vec_model"):
     # load encoder and embedding model
-    p2v = load_pitchclass2vec_model(encoder, embedding_model, embedding_model_path)
+        encoder, embedding_model = exp_args.get("encoder"), exp_args.get("embedding_model")
+        embedding_model_path = exp_args.get("embedding_model_path")
+        embedding_model = load_pitchclass2vec_model(encoder, embedding_model, embedding_model_path)
+    
+    else:
+        encoder = ENCODING_MAP[exp_args.get("encoder")]
+        embedding_model = NaiveEmbeddingModel(encoding_model=encoder, embedding_dim=3) # dim=3 because each '24 basic chords' only contain 3 notes
+
 
     # Prepare dataset for Segmentation model trainning by Billboard Dataset
     data = SegmentationDataModule(  dataset_cls=BillboardDataset, 
-                                    pitchclass2vec=p2v, 
+                                    embedding_model=embedding_model, 
+                                    # TODO: Batch Size maybe too large may cause overfitting
                                     batch_size = segmentation_train_args.get("batch_size",256), 
                                     test_mode = segmentation_train_args.get("test_mode", True),
                                     full_chord = segmentation_train_args.get("full_chord", False)
                                     )
 
     # Prepare Model
+
+    # If we not using pitchclass2vec_model then embedding_dim must be 3
+    embedding_dim = embedding_model.vector_size if segmentation_train_args.get("use_pitchclass2vec_model") else 3
+
     lstm_model = LSTMBaselineModel(
         segmentation_train_args = segmentation_train_args,
         num_labels=segmentation_train_args["num_labels"],
-        embedding_dim=p2v.vector_size,
+        embedding_dim=embedding_dim,
         hidden_size=segmentation_train_args["hidden_size"],
         num_layers=segmentation_train_args["num_layers"],
         dropout=segmentation_train_args["dropout"],
@@ -82,7 +93,7 @@ def train(exp_args, segmentation_train_args):
             config={
                 # Add any other parameters you want to track
                 "num_labels": segmentation_train_args["num_labels"],
-                # "embedding_dim": segmentation_train_args["embedding_dim"] or p2v.vector_size,
+                "embedding_dim": embedding_dim,
                 "hidden_size": segmentation_train_args["hidden_size"],
                 "num_layers": segmentation_train_args["num_layers"],
                 "dropout": segmentation_train_args["dropout"],
@@ -152,6 +163,8 @@ if __name__ == "__main__":
     parser.add_argument("--test_mode", type=str2bool, default=False, nargs='?', const=True, help="Whether to use test mode (default: %(default)s).")
     
     parser.add_argument("--full_chord", type=str2bool, default=False, nargs='?', const=True, help="Whether to use full chords (default: %(default)s).")
+
+    parser.add_argument("--use_pitchclass2vec_model", type=str2bool, default=False, nargs='?', const=True, help="Whether to use pitchclass2vec model (default: %(default)s).")
 
     parser.add_argument("--disable_wandb", type=str2bool, default=False, nargs='?', const=True,
                         help="Whether to disable wandb (default: %(default)s).")

@@ -26,6 +26,9 @@ class RootIntervalMixin(object):
     Returns:
         List[np.array]: List of encoded components of the chord.
     """
+    # if chord is a 'N'ull chord:
+    if chord == 'N' or chord == 'X': return [0, 0, 0]
+    # if chord is not a null chord:
     pc = chord_pitchclass(chord)
 
     if len(pc) != 0:

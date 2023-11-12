@@ -135,6 +135,25 @@ def computeSegmentation_and_display(extracted_data, algo, num_optimal_seg, sampl
     return bkps_times 
 
 
+def computeSegmentation_and_display(extracted_data, bkps_times, sampling_rate=22050, hop_length_tempo=256):
+
+    print(f"bkps_times: {bkps_times}")
+
+    # Displaying results
+    fig, ax = fig_ax()
+    _ = librosa.display.specshow(
+        extracted_data,
+        ax=ax,
+        x_axis="s",
+        y_axis="tempo",
+        hop_length=hop_length_tempo,
+        sr=sampling_rate,
+    )
+
+    for b in bkps_times[:-1]:
+        ax.axvline(b, ls="--", color="white", lw=4)
+    
+
 
 def obtain_segmentation_time(audio_path, num_optimal_seg, algo_type,algo_name, sampling_rate=22050, hop_length_tempo = 256):
     """
@@ -187,3 +206,11 @@ def output(signal,bkps_times,sampling_rate=22050):
         segment = signal[start:end]
         print(f"Segment n°{segment_number} (duration: {segment.size/sampling_rate:.2f} s)")
         display(Audio(data=segment, rate=sampling_rate))
+
+
+
+def display_output_from_bkps_times(path,bkps_times,sampling_rate = 22050):
+    signal = load_and_display(path, sampling_rate)
+    extracted_data = computeFeature_Tempogram(signal, sampling_rate = 22050,hop_length_tempo = 256)
+    computeSegmentation_and_display(extracted_data, bkps_times, sampling_rate=22050, hop_length_tempo=256)
+    output(signal,bkps_times,sampling_rate=22050)

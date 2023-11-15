@@ -197,6 +197,8 @@ if __name__ == "__main__":
     
     parser.add_argument("--out", type=str, default="/app/segmentation_out", help="Output path for saving the model checkpoints.")
 
+    parser.add_argument("--init_method", type=str, default="xavier", help="Method for initialize the weights.")
+
     args = parser.parse_args()
     # Combine the parsed arguments into the expected structure for train function
     exp_args = {

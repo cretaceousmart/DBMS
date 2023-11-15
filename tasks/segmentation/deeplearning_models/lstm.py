@@ -45,6 +45,31 @@ class LSTMBaselineModel(BaseModel):
         self.classification = nn.Linear(hidden_size * 2, num_labels)
         self.softmax = nn.Softmax(dim=2)
         self.segmentation_train_args = segmentation_train_args
+        self.init_weights(self.segmentation_train_args.get("init_method"))
+    
+    def init_weights(self, init_method):
+        if init_method == "xavier":
+            self.apply(self._init_xavier)
+        elif init_method == "orthogonal":
+            self.apply(self._init_orthogonal)
+        # 可以根据需要添加更多的初始化方法
+
+    @staticmethod
+    def _init_xavier(m):
+        if type(m) == nn.LSTM:
+            for name, param in m.named_parameters():
+                if 'weight_ih' in name:
+                    nn.init.xavier_uniform_(param.data)
+                elif 'weight_hh' in name:
+                    nn.init.orthogonal_(param.data)
+
+    @staticmethod
+    def _init_orthogonal(m):
+        if type(m) == nn.LSTM:
+            for name, param in m.named_parameters():
+                if 'weight_ih' in name:
+                    nn.init.orthogonal_(param.data)
+
 
     def _predict(self, batch: Tuple[torch.tensor, torch.tensor, torch.tensor]) -> Tuple[torch.tensor, torch.tensor]:
         """

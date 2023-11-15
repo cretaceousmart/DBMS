@@ -146,8 +146,8 @@ class BillboardDataset(Dataset):
     """
     chords, labels = self.dataset[idx]
 
-    print(f"Jie log: len(chords): {len(chords)}, len(labels):{len(labels)} ")
-    print(f"Jie log: chord: {chords}, labels: {labels}")
+    # print(f"Jie log: len(chords): {len(chords)}, len(labels):{len(labels)} ")
+    # print(f"Jie log: chord: {chords}, labels: {labels}")
 
 
     embedded_chords = list()
@@ -156,7 +156,7 @@ class BillboardDataset(Dataset):
         embedded_chords.append(self.embedding_model[c])    
       except:
         embedded_chords.append(self.embedding_model["N"])
-    print(f"Jie Log: len(embedded_chords): {len(embedded_chords)}")
+    # print(f"Jie Log: len(embedded_chords): {len(embedded_chords)}")
     chords = np.array(embedded_chords)
         
     labels = self.label_encoder.transform(np.array(labels).reshape(-1, 1)).toarray()

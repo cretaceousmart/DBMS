@@ -55,8 +55,12 @@ def train(exp_args, segmentation_train_args):
         embedding_model = load_pitchclass2vec_model(encoder, embedding_model, embedding_model_path)
     
     else:
+        print("Jie Log: Use root-interval as enbedding!!!")
         encoder = ENCODING_MAP[exp_args.get("encoder")]
-        embedding_model = NaiveEmbeddingModel(encoding_model=encoder, embedding_dim=3) # dim=3 because each '24 basic chords' only contain 3 notes
+        embedding_model = NaiveEmbeddingModel(
+                                encoding_model=encoder, 
+                                embedding_dim=3, # dim=3 because each '24 basic chords' only contain 3 notes
+                                norm=segmentation_train_args.get("norm_in_embedding",False)) 
 
 
     # Prepare dataset for Segmentation model trainning by Billboard Dataset
@@ -165,6 +169,9 @@ if __name__ == "__main__":
     parser.add_argument("--full_chord", type=str2bool, default=False, nargs='?', const=True, help="Whether to use full chords (default: %(default)s).")
 
     parser.add_argument("--use_pitchclass2vec_model", type=str2bool, default=False, nargs='?', const=True, help="Whether to use pitchclass2vec model (default: %(default)s).")
+
+    parser.add_argument("--norm_in_embedding", type=str2bool, default=False, nargs='?', const=True, help="Whether to use norm during embedding (default: %(default)s).")
+
 
     parser.add_argument("--disable_wandb", type=str2bool, default=False, nargs='?', const=True,
                         help="Whether to disable wandb (default: %(default)s).")

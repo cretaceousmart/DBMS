@@ -229,7 +229,8 @@ import scipy.misc
 import scipy.special
 import sys
 sys.path.append("/app/mir_eval_simple/")
-import mir_eval_simple_utils
+# import mir_eval_simple_utils
+from externel_library.mir_eval_simple import mir_eval_simple_utils
 
 
 

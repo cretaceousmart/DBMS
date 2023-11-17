@@ -95,8 +95,6 @@ class BillboardDataset(Dataset):
       except Exception as e:
         print("Track", i, "not parsable")
 
-    # train the label encoder for each label
-    self.label_encoder = OneHotEncoder().fit(np.array(list(labels)).reshape(-1, 1))
 
   @staticmethod
   def preprocess_section(section: str) -> str:
@@ -133,10 +131,12 @@ class BillboardDataset(Dataset):
     """
     return len(self.dataset)
 
-  @functools.cache
+  # @functools.cache
   def __getitem__(self, idx: int) -> Tuple[np.array, np.array]:
     """
     Retrieve an item from the dataset.
+    In Billboard dataset:
+    {'bridge': 0, 'chorus': 1, 'instrumental': 2, 'interlude': 3, 'intro': 4, 'other': 5, 'outro': 6, 'refrain': 7, 'theme': 8, 'transition': 9, 'verse': 10}
 
     Args:
         idx (int): The item index.
@@ -146,46 +146,38 @@ class BillboardDataset(Dataset):
     """
     chords, labels = self.dataset[idx]
 
-    # print(f"Jie log: len(chords): {len(chords)}, len(labels):{len(labels)} ")
-    # print(f"Jie log: chord: {chords}, labels: {labels}")
 
-
+    # Encode each chord into a 3-dimensional vector
     embedded_chords = list()
     for c in chords:
       try:
         embedded_chords.append(self.embedding_model[c])    
       except:
         embedded_chords.append(self.embedding_model["N"])
-    # print(f"Jie Log: len(embedded_chords): {len(embedded_chords)}")
     chords = np.array(embedded_chords)
-        
-    labels = self.label_encoder.transform(np.array(labels).reshape(-1, 1)).toarray()
-    return chords, labels 
+    
+
+    # Encode the label into one-hot
+    label_to_int = {'bridge': 0, 'chorus': 1, 'instrumental': 2, 'interlude': 3, 'intro': 4, 'other': 5, 'outro': 6, 'refrain': 7, 'theme': 8, 'transition': 9, 'verse': 10}
+    # int_to_label = {idx: label for label, idx in label_to_int.items()}
+    labels_set = set(i for i in label_to_int.keys())
+
+    int_labels = [label_to_int[i] for i in labels]
+
+    one_hot_labels = torch.nn.functional.one_hot(torch.tensor(int_labels), num_classes=len(labels_set)).cpu().detach().numpy().astype(np.float64)
+
+    return chords, one_hot_labels
   
   @staticmethod
-  def collate_fn(sample: Tuple[np.array, np.array]) -> Tuple[torch.tensor, torch.tensor, torch.tensor]:
-    """
-    Collate the provided samples in a single batch.
-
-    Args:
-        sample (Tuple[np.array, np.array]): Input sample
-
-    Returns:
-        Tuple[torch.tensor, torch.tensor, torch.tensor]: Output batch.
-    """
-    chords, labels = zip(*sample)
-
+  def collate_fn(batch: List[Tuple[np.array, np.array]]) -> Tuple[torch.tensor, torch.tensor, torch.tensor]:
+    chords, labels = zip(*batch)
+    # 创建 mask 以处理不同长度的序列
     mask = [np.ones(x.shape[0]) for x in chords]
-    
-    chords = pad_sequence(map(torch.tensor, chords),
-                          batch_first=True, 
-                          padding_value=-1)
-    labels = pad_sequence(map(torch.tensor, labels),
-                          batch_first=True, 
-                          padding_value=0)
-    mask = pad_sequence(map(torch.tensor, mask),
-                        batch_first=True, 
-                        padding_value=0)
+
+    # 将 numpy 数组转换为 torch 张量，并进行填充以确保批次中所有样本的一致性
+    chords = pad_sequence(map(torch.tensor, chords), batch_first=True, padding_value=-1).float()
+    labels = pad_sequence(map(torch.tensor, labels), batch_first=True, padding_value=0)
+    mask = pad_sequence(map(torch.tensor, mask), batch_first=True, padding_value=0)
 
     return chords, labels, mask
 
@@ -248,7 +240,6 @@ class SegmentationDataModule(pl.LightningDataModule):
       collate_fn=self.dataset_cls.collate_fn,
       persistent_workers=True,
       prefetch_factor=20
-
     ) 
 
   def train_dataloader(self) -> DataLoader:
@@ -271,3 +262,50 @@ class SegmentationDataModule(pl.LightningDataModule):
         DataLoader: DataLoader with testing data
     """
     return self.build_dataloader(self.test_dataset, shuffle=False)
+  
+
+
+
+"""
+-----------------------------------------
+Test Code:
+-----------------------------------------
+from tasks.segmentation.data import BillboardDataset, SegmentationDataModule
+from pitchclass2vec import encoding, model
+from pitchclass2vec.pitchclass2vec import NaiveEmbeddingModel
+
+encoder = encoding.RootIntervalDataset
+embedding_model = NaiveEmbeddingModel(
+                                encoding_model=encoder, 
+                                embedding_dim=3, # dim=3 because each '24 basic chords' only contain 3 notes
+                                norm=False)
+
+data = SegmentationDataModule(  dataset_cls=BillboardDataset, 
+                                    embedding_model=embedding_model, 
+                                    batch_size = 5,
+                                    test_mode = False,
+                                    full_chord = False
+                                    )
+
+                                    
+data.prepare_data()
+train_loader = data.train_dataloader()
+
+for i, batch in enumerate(train_loader):
+    
+    chord, labels, mask = batch  # 添加了 mask
+
+    print(f"Batch {i}:")
+    print(f"Chord size: {chord.size()}")
+    print(f"Labels size: {labels.size()}")
+    print(f"mask size: {mask.size()}")
+
+    if i == 0:
+        break
+-----------------------------------------
+Output:
+-----------------------------------------
+Chord size: torch.Size([5, 273, 3])
+Labels size: torch.Size([5, 273, 11])
+mask size: torch.Size([5, 273])
+"""

@@ -4,6 +4,7 @@ from pytorch_lightning.utilities.seed import seed_everything
 import pytorch_lightning as pl
 import torch.nn as nn
 import torch
+import torch.nn.functional as F
 from torchmetrics.functional import dice
 import numpy as np
 import wandb
@@ -14,10 +15,8 @@ from mir_eval.segment import pairwise, nce
 
 import torch.optim as optim
 
-from segmentation.deeplearning_models.base import BaseModel
+from tasks.segmentation.deeplearning_models.base import BaseModel
 
-
-# Model V2: Transformer
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000):
@@ -50,7 +49,12 @@ def scaled_dot_product(q, k, v, mask=None):
     d_k = q.size()[-1]
     attn_logits = torch.matmul(q, k.transpose(-2, -1))
     attn_logits = attn_logits / math.sqrt(d_k)
+
+    batch_size, num_heads, seq_length, _  = attn_logits.shape
+
     if mask is not None:
+        mask = mask.unsqueeze(1).unsqueeze(2)
+        mask = mask.expand(batch_size, num_heads, seq_length, seq_length)
         attn_logits = attn_logits.masked_fill(mask == 0, -9e15)
     attention = F.softmax(attn_logits, dim=-1)
     values = torch.matmul(attention, v)
@@ -63,7 +67,7 @@ class MultiheadAttention(nn.Module):
 
         self.embed_dim = embed_dim
         self.num_heads = num_heads
-        self.head_dim = embed_dim // num_heads
+        self.head_dim = embed_dim // num_heads # if embed_dim = 3, num_heads = 3, then there's 1 dim for each head
 
         # Stack all weight matrices 1...h together for efficiency
         # Note that in many implementations you see "bias=False" which is optional
@@ -85,8 +89,8 @@ class MultiheadAttention(nn.Module):
 
         # Separate Q, K, V from linear output
         qkv = qkv.reshape(batch_size, seq_length, self.num_heads, 3 * self.head_dim)
-        qkv = qkv.permute(0, 2, 1, 3)  # [Batch, Head, SeqLen, Dims]
-        q, k, v = qkv.chunk(3, dim=-1)
+        qkv = qkv.permute(0, 2, 1, 3)  # [Batch, Head, SeqLen, Dims], swap the 2rd and 3th element
+        q, k, v = qkv.chunk(3, dim=-1) # Chunk qkv into q, k, v
 
         # Determine value outputs
         values, attention = scaled_dot_product(q, k, v, mask=mask)
@@ -175,19 +179,7 @@ class CosineWarmupScheduler(optim.lr_scheduler._LRScheduler):
         return lr_factor
 
 class TransformerModel(BaseModel):
-    def __init__(
-        self,
-        input_dim,
-        model_dim,
-        num_classes,
-        num_heads,
-        num_layers,
-        lr,
-        warmup,
-        max_iters,
-        dropout=0.0,
-        input_dropout=0.0,
-    ):
+    def __init__(self,segmentation_train_args):
         """TransformerPredictor.
 
         Args:
@@ -203,47 +195,74 @@ class TransformerModel(BaseModel):
             input_dropout: Dropout to apply on the input features
         """
         super().__init__()
-        self.save_hyperparameters()
+        self.save_hyperparameters(segmentation_train_args)
+        
+        # Extract the hyperparameter from segmentation_train_args
+        self.input_dim = segmentation_train_args.get("input_dim")
+        self.model_dim = segmentation_train_args.get("model_dim")
+        self.num_classes = segmentation_train_args.get("num_classes")
+        self.num_heads = segmentation_train_args.get("num_heads")
+        self.num_layers = segmentation_train_args.get("num_layers")
+        self.lr = segmentation_train_args.get("lr")
+        self.warmup = segmentation_train_args.get("warmup")
+        self.max_iters = segmentation_train_args.get("max_iters")
+        self.dropout = segmentation_train_args.get("dropout", 0.0)
+        self.input_dropout = segmentation_train_args.get("input_dropout", 0.0)
+
         self._create_model()
+
 
     def _create_model(self):
         # Input dim -> Model dim
         self.input_net = nn.Sequential(
-            nn.Dropout(self.hparams.input_dropout), nn.Linear(self.hparams.input_dim, self.hparams.model_dim)
+            nn.Dropout(self.input_dropout), nn.Linear(self.input_dim, self.model_dim)
         )
         # Positional encoding for sequences
-        self.positional_encoding = PositionalEncoding(d_model=self.hparams.model_dim)
+        self.positional_encoding = PositionalEncoding(d_model=self.model_dim)
         # Transformer
         self.transformer = TransformerEncoder(
-            num_layers=self.hparams.num_layers,
-            input_dim=self.hparams.model_dim,
-            dim_feedforward=2 * self.hparams.model_dim,
-            num_heads=self.hparams.num_heads,
-            dropout=self.hparams.dropout,
+            num_layers=self.num_layers,
+            input_dim=self.model_dim,
+            dim_feedforward=2 * self.model_dim,
+            num_heads=self.num_heads,
+            dropout=self.dropout,
         )
         # Output classifier per sequence lement
         self.output_net = nn.Sequential(
-            nn.Linear(self.hparams.model_dim, self.hparams.model_dim),
-            nn.LayerNorm(self.hparams.model_dim),
+            nn.Linear(self.model_dim, self.model_dim),
+            nn.LayerNorm(self.model_dim),
             nn.ReLU(inplace=True),
-            nn.Dropout(self.hparams.dropout),
-            nn.Linear(self.hparams.model_dim, self.hparams.num_classes),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.model_dim, self.num_classes),
         )
 
-    def forward(self, x, mask=None, add_positional_encoding=True):
+    def _predict(self, batch: Tuple[torch.tensor, torch.tensor, torch.tensor], add_positional_encoding = True) -> Tuple[torch.tensor, torch.tensor]:
         """
+        This is exactly the `forward(x, mask)` function
         Args:
-            x: Input features of shape [Batch, SeqLen, input_dim]
-            mask: Mask to apply on the attention outputs (optional)
-            add_positional_encoding: If True, we add the positional encoding to the input.
+            batch: 
+            add_positional_encoding: Default as True, we add the positional encoding to the input.
                                       Might not be desired for some tasks.
+
+        Return:
+            x: result of feed forward process
+            loss: we use binary_cross_entropy
         """
-        x = self.input_net(x)
+        x, y, mask = batch
+        
+        x = self.input_net(x.float())
         if add_positional_encoding:
             x = self.positional_encoding(x)
         x = self.transformer(x, mask=mask)
         x = self.output_net(x)
-        return x
+        
+        # loss = nn.functional.binary_cross_entropy(x[mask != 0].float(), y[mask != 0].float())
+        y_class = torch.argmax(y, dim=-1)
+        x_masked = x[mask != 0].view(-1, x.size(-1))
+        y_masked = y_class[mask != 0]
+        loss = F.cross_entropy(x_masked, y_masked)
+
+        return x, loss
 
     @torch.no_grad()
     def get_attention_maps(self, x, mask=None, add_positional_encoding=True):
@@ -258,11 +277,11 @@ class TransformerModel(BaseModel):
         return attention_maps
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=self.hparams.lr)
+        optimizer = optim.Adam(self.parameters(), lr=self.lr)
 
         # We don't return the lr scheduler because we need to apply it per iteration, not per epoch
         self.lr_scheduler = CosineWarmupScheduler(
-            optimizer, warmup=self.hparams.warmup, max_iters=self.hparams.max_iters
+            optimizer, warmup=self.warmup, max_iters=self.max_iters
         )
         return optimizer
 

@@ -8,7 +8,7 @@ sys.path.append('/app/')
 from pitchclass2vec import encoding, model
 from tasks.segmentation.data import BillboardDataset, SegmentationDataModule
 from tasks.segmentation.deeplearning_models.lstm import LSTMBaselineModel
-
+from tasks.segmentation.deeplearning_models.transformer import TransformerModel
 import pitchclass2vec.model as model
 import pitchclass2vec.encoding as encoding
 from pitchclass2vec.pitchclass2vec import NaiveEmbeddingModel
@@ -66,14 +66,12 @@ def train(exp_args, segmentation_train_args):
     # Prepare dataset for Segmentation model trainning by Billboard Dataset
     data = SegmentationDataModule(  dataset_cls=BillboardDataset, 
                                     embedding_model=embedding_model, 
-                                    # TODO: Batch Size maybe too large may cause overfitting
                                     batch_size = segmentation_train_args.get("batch_size",256), 
                                     test_mode = segmentation_train_args.get("test_mode", True),
                                     full_chord = segmentation_train_args.get("full_chord", False)
                                     )
 
     # Prepare Model
-
     # If we not using pitchclass2vec_model then embedding_dim must be 3
     embedding_dim = embedding_model.vector_size if segmentation_train_args.get("use_pitchclass2vec_model") else 3
 
@@ -86,6 +84,8 @@ def train(exp_args, segmentation_train_args):
         dropout=segmentation_train_args["dropout"],
         learning_rate=segmentation_train_args["learning_rate"],
     )
+
+    transformer_model = TransformerModel(segmentation_train_args)
 
     # Set up Weight&Bias for monitering the trainning process
     if not segmentation_train_args.get("disable_wandb", False):
@@ -108,8 +108,9 @@ def train(exp_args, segmentation_train_args):
                 "patience": segmentation_train_args["patience"]
             }
         )
-        wandb.watch(lstm_model)
+        wandb.watch(transformer_model)
 
+    # TODO: monitor acc as well
     callbacks = [
         pl.callbacks.ModelCheckpoint(save_top_k=1,
                                     monitor="train/loss",
@@ -119,17 +120,20 @@ def train(exp_args, segmentation_train_args):
                                     every_n_epochs=1)
     ] 
 
-    trainer = pl.Trainer(max_epochs=segmentation_train_args.get("max_epochs"), 
+    trainer = pl.Trainer(   max_epochs=segmentation_train_args.get("max_epochs"), 
                             accelerator="auto", 
                             devices=1,
                             enable_progress_bar=True,
                             callbacks=callbacks)
 
-    trainer.fit(lstm_model, data)
+    if segmentation_train_args.get("model_type", False) == "lstm":
+        trainer.fit(lstm_model, data)
+    else:
+        trainer.fit(transformer_model, data)
 
     wandb.save(str(Path(segmentation_train_args.get("out")) / f"{segmentation_train_args.get('wandb_run_name')}"))
 
-    test_metrics = trainer.test(lstm_model, data)
+    test_metrics = trainer.test(transformer_model, data)
     # Use pd.concat instead of pd.append
     new_row_df = pd.DataFrame([{
         "encoding": exp_args.get("encoder"), "embedding_model": exp_args.get("embedding_model"), "embedding_model_path": exp_args.get("embedding_model_path"), **test_metrics[0]

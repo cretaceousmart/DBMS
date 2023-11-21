@@ -133,10 +133,12 @@ class BillboardDataset(Dataset):
 
   # @functools.cache
   def __getitem__(self, idx: int) -> Tuple[np.array, np.array]:
+
+    # TODO: change output from (chord, labels, mask) to (source, target, source_mask, target_mask)
     """
-    Retrieve an item from the dataset.
+    Retrieve an item from the dataset. Not in a batch
     In Billboard dataset:
-    {'bridge': 0, 'chorus': 1, 'instrumental': 2, 'interlude': 3, 'intro': 4, 'other': 5, 'outro': 6, 'refrain': 7, 'theme': 8, 'transition': 9, 'verse': 10}
+    {'bridge': 1, 'chorus': 2, 'instrumental': 3, 'interlude': 4, 'intro': 5, 'other': 6, 'outro': 7, 'refrain': 8, 'theme': 9, 'transition': 10, 'verse': 11}
 
     Args:
         idx (int): The item index.
@@ -158,11 +160,31 @@ class BillboardDataset(Dataset):
     
 
     # Encode the label into one-hot
-    label_to_int = {'bridge': 0, 'chorus': 1, 'instrumental': 2, 'interlude': 3, 'intro': 4, 'other': 5, 'outro': 6, 'refrain': 7, 'theme': 8, 'transition': 9, 'verse': 10}
-    # int_to_label = {idx: label for label, idx in label_to_int.items()}
+    
+    # label_to_int = {'bridge': 0, 'chorus': 1, 'instrumental': 2, 'interlude': 3, 'intro': 4, 'other': 5, 'outro': 6, 'refrain': 7, 'theme': 8, 'transition': 9, 'verse': 10}
+
+    # Here the number must be consistent with the padding value in: labels = pad_sequence(map(torch.tensor, labels), batch_first=True, padding_value=0)
+    label_to_int = {
+      '<PAD>': 0,
+      '<SOS>': 1,
+      '<EOS>': 13,
+      'bridge': 2,
+      'chorus': 3,
+      'instrumental': 4,
+      'interlude': 5,
+      'intro': 6,
+      'other': 7,
+      'outro': 8,
+      'refrain': 9,
+      'theme': 10,
+      'transition': 11,
+      'verse': 12
+    }
+    int_to_label = {idx: label for label, idx in label_to_int.items()}
+
     labels_set = set(i for i in label_to_int.keys())
 
-    int_labels = [label_to_int[i] for i in labels]
+    int_labels = [label_to_int['<SOS>']] + [label_to_int[e] for e in labels] + [label_to_int['<EOS>']]
 
     one_hot_labels = torch.nn.functional.one_hot(torch.tensor(int_labels), num_classes=len(labels_set)).cpu().detach().numpy().astype(np.float64)
 
@@ -171,15 +193,20 @@ class BillboardDataset(Dataset):
   @staticmethod
   def collate_fn(batch: List[Tuple[np.array, np.array]]) -> Tuple[torch.tensor, torch.tensor, torch.tensor]:
     chords, labels = zip(*batch)
-    # 创建 mask 以处理不同长度的序列
-    mask = [np.ones(x.shape[0]) for x in chords]
 
     # 将 numpy 数组转换为 torch 张量，并进行填充以确保批次中所有样本的一致性
     chords = pad_sequence(map(torch.tensor, chords), batch_first=True, padding_value=-1).float()
     labels = pad_sequence(map(torch.tensor, labels), batch_first=True, padding_value=0)
-    mask = pad_sequence(map(torch.tensor, mask), batch_first=True, padding_value=0)
 
-    return chords, labels, mask
+    source_mask = (chords != -1)
+
+    trg_lens = torch.sum(labels != 0, dim=1)
+    max_len = trg_lens.max()
+    target_mask = (torch.arange(max_len).expand(len(labels), max_len) < trg_lens.unsqueeze(1)).bool()
+
+    # Return: chord is source sequence, labels is target sequence
+    return chords, labels, source_mask, target_mask
+
 
 
 class SegmentationDataModule(pl.LightningDataModule):

@@ -20,8 +20,8 @@ from tasks.segmentation.deeplearning_models.base import BaseModel
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000):
-        """Positional Encoding.
-
+        """Positional Encoding. shape of input and output are the same
+        TODO: may need a new way for position encoding
         Args:
             d_model: Hidden dimensionality of the input.
             max_len: Maximum length of a sequence to expect.
@@ -45,7 +45,33 @@ class PositionalEncoding(nn.Module):
         x = x + self.pe[:, : x.size(1)]
         return x
 
+class PositionwiseFeedforwardLayer(nn.Module):
+    """
+    Just a linear mapping to 'learn more infomation', input_dim -> feedforward_dim -> input_dim
+    Params: 
+        - input_dim: input dimension of the model
+        - feedforward_dim: dimension of inner layer, only being used in this function
+        - dropout_rate: set as 0 as defult
+    
+        Return: shape of input and output are the same: [batch_size, Seqlen, ]
+
+    """
+    def __init__(self, input_dim, feedforward_dim, dropout_rate):
+        super().__init__()
+        self.fc_1 = nn.Linear(input_dim, feedforward_dim)
+        self.fc_2 = nn.Linear(feedforward_dim, input_dim)
+        self.dropout = nn.Dropout(dropout_rate)
+    
+    def forward(self, x):
+        x = self.dropout(torch.relu(self.fc_1(x))) #[batch size, Seqlen, pf_dim]
+        x = self.fc_2(x)
+        return x #[batch size, Seqlen, input_dim]
+
+
 def scaled_dot_product(q, k, v, mask=None):
+    """
+    input shape = output shape: [Batch, Head, SeqLen, self.head_dim]
+    """
     d_k = q.size()[-1]
     attn_logits = torch.matmul(q, k.transpose(-2, -1))
     attn_logits = attn_logits / math.sqrt(d_k)
@@ -56,12 +82,19 @@ def scaled_dot_product(q, k, v, mask=None):
         mask = mask.unsqueeze(1).unsqueeze(2)
         mask = mask.expand(batch_size, num_heads, seq_length, seq_length)
         attn_logits = attn_logits.masked_fill(mask == 0, -9e15)
-    attention = F.softmax(attn_logits, dim=-1)
-    values = torch.matmul(attention, v)
+
+    attention = F.softmax(attn_logits, dim=-1) # Calculate the attention weight
+    values = torch.matmul(attention, v) 
     return values, attention
 
 class MultiheadAttention(nn.Module):
     def __init__(self, input_dim, embed_dim, num_heads):
+        """
+        Params:
+        - input_dim: Hidden dimensionality of the input
+        - embed_dim: we map the input_dim into 3 * embed_dim, but actually outside this function we set embed_dim = input_dim
+        - num_head: number of headers
+        """
         super().__init__()
         assert embed_dim % num_heads == 0, "Embedding dimension must be 0 modulo number of heads."
 
@@ -74,6 +107,12 @@ class MultiheadAttention(nn.Module):
         self.qkv_proj = nn.Linear(input_dim, 3 * embed_dim)
         self.o_proj = nn.Linear(embed_dim, embed_dim)
 
+        # Linear mapping for query, key, value
+        self.fc_q = nn.Linear(input_dim, input_dim)
+        self.fc_k = nn.Linear(input_dim, input_dim)
+        self.fc_v = nn.Linear(input_dim, input_dim)
+
+
         self._reset_parameters()
 
     def _reset_parameters(self):
@@ -82,49 +121,54 @@ class MultiheadAttention(nn.Module):
         self.qkv_proj.bias.data.fill_(0)
         nn.init.xavier_uniform_(self.o_proj.weight)
         self.o_proj.bias.data.fill_(0)
+    
+    def forward(self, query, key, value, mask=None, return_attention=False):
+        
+        batch_size, seq_length, embed_dim = query.size()
 
-    def forward(self, x, mask=None, return_attention=False):
-        batch_size, seq_length, embed_dim = x.size()
-        qkv = self.qkv_proj(x)
+        # shape: [batch_size, Seqlen, input_dim]
+        Q = self.fc_q(query)
+        K = self.fc_k(key)
+        V = self.fc_v(value)
 
-        # Separate Q, K, V from linear output
-        qkv = qkv.reshape(batch_size, seq_length, self.num_heads, 3 * self.head_dim)
-        qkv = qkv.permute(0, 2, 1, 3)  # [Batch, Head, SeqLen, Dims], swap the 2rd and 3th element
-        q, k, v = qkv.chunk(3, dim=-1) # Chunk qkv into q, k, v
+        # shape: [batch_size, head, Seqlen, head_dim]
+        Q = Q.view(batch_size, -1, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        K = K.view(batch_size, -1, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        V = V.view(batch_size, -1, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
 
-        # Determine value outputs
-        values, attention = scaled_dot_product(q, k, v, mask=mask)
-        values = values.permute(0, 2, 1, 3)  # [Batch, SeqLen, Head, Dims]
-        values = values.reshape(batch_size, seq_length, embed_dim)
-        o = self.o_proj(values)
+        values, attention = scaled_dot_product(Q, K, V, mask)
+
+        # Concatenate the heads
+        values = values.permute(0, 2, 1, 3).contiguous()  # [Batch, SeqLen, Head, head_dim]
+        values = values.view(batch_size, -1, self.embed_dim)  # combine the Head and head_dim by reshape
+
+        # Apply final linear projection
+        output = self.o_proj(values)
 
         if return_attention:
-            return o, attention
+            return output, attention
         else:
-            return o
+            return output
+
+
 
 class EncoderBlock(nn.Module):
-    def __init__(self, input_dim, num_heads, dim_feedforward, dropout=0.0):
+    def __init__(self, input_dim, num_heads, feedforward_dim, dropout=0.0):
         """EncoderBlock.
 
         Args:
             input_dim: Dimensionality of the input
             num_heads: Number of heads to use in the attention block
-            dim_feedforward: Dimensionality of the hidden layer in the MLP
+            feedforward_dim: Dimensionality of the hidden layer in the MLP
             dropout: Dropout probability to use in the dropout layers
         """
         super().__init__()
 
         # Attention layer
+        # TODO: change the code below since definition of MultiheadAttention is changed
         self.self_attn = MultiheadAttention(input_dim, input_dim, num_heads)
 
-        # Two-layer MLP
-        self.linear_net = nn.Sequential(
-            nn.Linear(input_dim, dim_feedforward),
-            nn.Dropout(dropout),
-            nn.ReLU(inplace=True),
-            nn.Linear(dim_feedforward, input_dim),
-        )
+        self.linear_net = PositionwiseFeedforwardLayer(input_dim, feedforward_dim, dropout)
 
         # Layers to apply in between the main layers
         self.norm1 = nn.LayerNorm(input_dim)
@@ -162,6 +206,93 @@ class TransformerEncoder(nn.Module):
             x = layer(x)
         return attention_maps
 
+
+class DecoderBlock(nn.Module):
+    def __init__(self, 
+                 input_dim,
+                 num_heads,
+                 feedforward_dim, 
+                 dropout,
+                 ):
+        super().__init__()
+        
+        self.decoder_attention_layer_norm = nn.LayerNorm(input_dim)
+        self.encoder_attention_layer_norm = nn.LayerNorm(input_dim)
+        self.ff_layer_norm = nn.LayerNorm(input_dim)
+
+        self.decoder_attention = MultiheadAttention(input_dim, input_dim, num_heads) 
+        self.encoder_attention = MultiheadAttention(input_dim, input_dim, num_heads)
+        self.positionwise_feedforward = PositionwiseFeedforwardLayer(input_dim, feedforward_dim, dropout)
+        self.dropout = nn.Dropout(dropout)
+    
+    def forward(self, target, encoded_source, target_mask, source_mask):
+        _target = self.decoder_attention(target, target, target, target_mask)
+        target = self.decoder_attention_layer_norm(target + self.dropout(_target))
+
+        _target, attention = self.encoder_attention(target, encoded_source, encoded_source, source_mask,return_attention = True)
+        target = self.encoder_attention_layer_norm(target + self.dropout(_target))
+
+        _target = self.positionwise_feedforward(target)
+        target = self.ff_layer_norm(target + self.dropout(_target))
+
+        return target, attention
+
+
+class TransformerDecoder(nn.Module):
+    def __init__(self,
+                 input_dim, # 3 as default because a chord is encoded into a vector that length = 3, e.g. encode('C:maj') = [1024,8,0] (not accurate)
+                 output_dim,
+                 num_layers,
+                 num_heads,
+                 feedforward_dim,
+                 dropout,
+                 device,
+                 decoder_max_length
+                 ):
+        super().__init__()
+
+        self.device = device
+        self.position_embedding = PositionalEncoding(input_dim, decoder_max_length)
+        self.decoder_layers = nn.ModuleList([DecoderBlock(input_dim, num_heads, feedforward_dim, dropout)] for _ in range(num_layers))
+
+        self.fc_out = nn.Linear(input_dim, output_dim)
+        self.dropout = nn.Dropout(dropout)
+        self.scale = torch.sqrt(torch.FloatTensor([input_dim])).to(device)
+
+
+    def forward(self, encoded_source, target, source_mask, target_mask):
+        """
+        Params:
+            - target: encoded chord sequence: [batch_size, Seqlen, emb_dim]
+            - encoded_source: output come out of TransformerEncoder module [batch_size, Seqlen, emb_dim]  
+            - source_mask: as we used padding to make sure Seqlen are the same, source_mask is used to make sure model won't calculate the padding part
+            - target_mask: 
+            
+            
+        Return:
+            - output: the output of the Decoder Module
+            - attention: the attention matrix (batch_size, head, Seqlen, Seqlen) of encoder attention, may not useful
+        """
+        assert len(target.shape) == 3 #Check if the chord sequence satisfied [batch_size, Seqlen, emb_dim]
+        batch_size, Seqlen = target.shape[0], target.shape[1]
+        assert target.shape[2] == 3 #Check if we use root interval to encode the chord sequence
+        
+        # Calculate position indices and add positional encoding
+        pos = torch.arange(0, Seqlen).unsqueeze(0).repeat(batch_size, 1).to(self.device)
+        target = self.scale * target + self.position_embedding(pos)
+        target = self.dropout(target)
+
+        # Pass through each of the decoder layers in sequence
+        for layer in self.decoder_layers:
+            target, attention = layer(target, encoded_source, target_mask, source_mask)
+
+        # Apply the final fully connected layer to get logits of output_dim size
+        output = self.fc_out(target)
+
+        return output, attention
+        
+    
+
 class CosineWarmupScheduler(optim.lr_scheduler._LRScheduler):
     def __init__(self, optimizer, warmup, max_iters):
         self.warmup = warmup
@@ -178,7 +309,9 @@ class CosineWarmupScheduler(optim.lr_scheduler._LRScheduler):
             lr_factor *= epoch * 1.0 / self.warmup
         return lr_factor
 
+
 class TransformerModel(BaseModel):
+    
     def __init__(self,segmentation_train_args):
         """TransformerPredictor.
 
@@ -198,18 +331,25 @@ class TransformerModel(BaseModel):
         self.save_hyperparameters(segmentation_train_args)
         
         # Extract the hyperparameter from segmentation_train_args
+        # TODO: remove the arg that don't needed
         self.input_dim = segmentation_train_args.get("input_dim")
+        self.output_dim = segmentation_train_args.get("output_dim")
         self.model_dim = segmentation_train_args.get("model_dim")
+        self.feedforward_dim = segmentation_train_args.get("feedforward_dim")
         self.num_classes = segmentation_train_args.get("num_classes")
         self.num_heads = segmentation_train_args.get("num_heads")
         self.num_layers = segmentation_train_args.get("num_layers")
+        self.decoder_max_length = segmentation_train_args.get("decoder_max_length")
+        
+        self.device = segmentation_train_args.get("device")
         self.lr = segmentation_train_args.get("lr")
         self.warmup = segmentation_train_args.get("warmup")
         self.max_iters = segmentation_train_args.get("max_iters")
         self.dropout = segmentation_train_args.get("dropout", 0.0)
         self.input_dropout = segmentation_train_args.get("input_dropout", 0.0)
 
-        self._create_model()
+
+        self._create_model() # call this function to create a Transformer model object
 
 
     def _create_model(self):
@@ -219,50 +359,59 @@ class TransformerModel(BaseModel):
         )
         # Positional encoding for sequences
         self.positional_encoding = PositionalEncoding(d_model=self.model_dim)
-        # Transformer
-        self.transformer = TransformerEncoder(
+
+
+        # Transformer Encoder
+        self.transformer_encoder = TransformerEncoder(
             num_layers=self.num_layers,
             input_dim=self.model_dim,
-            dim_feedforward=2 * self.model_dim,
+            feedforward_dim=2 * self.model_dim,
             num_heads=self.num_heads,
             dropout=self.dropout,
         )
+
+        # Transformer Decoder
+        self.transformer_decoder = TransformerDecoder(
+            input_dim = self.model_dim, 
+            output_dim = self.model_dim,
+            num_layers = self.num_layers,
+            num_heads = self.num_heads,
+            feedforward_dim = self.feedforward_dim,
+            dropout = self.dropout,
+            device = self.device,
+            decoder_max_length = self.decoder_max_length
+        )
+
+
         # Output classifier per sequence lement
         self.output_net = nn.Sequential(
             nn.Linear(self.model_dim, self.model_dim),
             nn.LayerNorm(self.model_dim),
             nn.ReLU(inplace=True),
             nn.Dropout(self.dropout),
-            nn.Linear(self.model_dim, self.num_classes),
+            nn.Linear(self.model_dim, self.num_classes), 
         )
+    
 
-    def _predict(self, batch: Tuple[torch.tensor, torch.tensor, torch.tensor], add_positional_encoding = True) -> Tuple[torch.tensor, torch.tensor]:
-        """
-        This is exactly the `forward(x, mask)` function
-        Args:
-            batch: 
-            add_positional_encoding: Default as True, we add the positional encoding to the input.
-                                      Might not be desired for some tasks.
-
-        Return:
-            x: result of feed forward process
-            loss: we use binary_cross_entropy
-        """
-        x, y, mask = batch
+    def _predict(self, batch: Tuple[torch.tensor, torch.tensor, torch.tensor], add_positional_encoding=True) -> Tuple[torch.tensor, torch.tensor]:
         
-        x = self.input_net(x.float())
+        source, target, source_mask, target_mask = batch
+        
         if add_positional_encoding:
-            x = self.positional_encoding(x)
-        x = self.transformer(x, mask=mask)
-        x = self.output_net(x)
+            source = self.positional_encoding(source)
+            target = self.positional_encoding(target)
         
-        # loss = nn.functional.binary_cross_entropy(x[mask != 0].float(), y[mask != 0].float())
-        y_class = torch.argmax(y, dim=-1)
-        x_masked = x[mask != 0].view(-1, x.size(-1))
-        y_masked = y_class[mask != 0]
-        loss = F.cross_entropy(x_masked, y_masked)
+        encoded_source = self.transformer_encoder(source, source_mask)
+        
+        output, _ = self.transformer_decoder(encoded_source, target , source_mask, target_mask)
 
-        return x, loss
+        output = self.output_net(output)
+
+        loss = F.cross_entropy(output.view(-1, output.shape[-1]), trg.view(-1), ignore_index=self.pad_idx)
+
+        return output, loss
+
+        
 
     @torch.no_grad()
     def get_attention_maps(self, x, mask=None, add_positional_encoding=True):
@@ -289,3 +438,57 @@ class TransformerModel(BaseModel):
         super().optimizer_step(*args, **kwargs)
         self.lr_scheduler.step()  # Step per iteration
 
+
+
+
+
+# Legacy Code:
+
+    # This is the old forward function (encoder-only Transformer)
+    # def _predict(self, batch: Tuple[torch.tensor, torch.tensor, torch.tensor], add_positional_encoding = True) -> Tuple[torch.tensor, torch.tensor]:
+    #     x, y, mask = batch
+        
+    #     x = self.input_net(x.float())
+    #     if add_positional_encoding:
+    #         x = self.positional_encoding(x)
+        
+    #     x = self.transformer_encoder(x, mask=mask)
+    #     x = self.output_net(x) 
+        
+    #     y_class = torch.argmax(y, dim=-1)
+    #     x_masked = x[mask != 0].view(-1, x.size(-1))
+    #     y_masked = y_class[mask != 0]
+    #     loss = F.cross_entropy(x_masked, y_masked)
+
+    #     return x, loss
+
+
+
+    # This is the old deinition of forward process of MultiheadAttention (only suitebla for encoder-only architecture)
+    # def forward(self, x, mask=None, return_attention=False):
+    #     """
+    #     from x -> q, k ,v -> value -> output
+    #     x:                  [batch_size, SeqLen, emb_dim]
+    #     q/k/v:              [batch_size, head, Seqlen, emb_dim / num_heads]
+    #     value not reshape:  [batch_size, head, SeqLen, head_dim]
+    #     value after reshape:[batch_size, SeqLen, emb_dim]
+    #     output:             [batch_size, SeqLen, emb_dim]
+    #     """
+    #     batch_size, seq_length, embed_dim = x.size()
+    #     qkv = self.qkv_proj(x)
+
+    #     # Separate Q, K, V from linear output
+    #     qkv = qkv.reshape(batch_size, seq_length, self.num_heads, 3 * self.head_dim)
+    #     qkv = qkv.permute(0, 2, 1, 3)  # [Batch, Head, SeqLen, 3 * self.head_dim], swap the 2rd and 3th element
+    #     q, k, v = qkv.chunk(3, dim=-1) # Chunk qkv into q, k, v： [Batch, Head, SeqLen, self.head_dim]
+
+    #     # Determine value outputs
+    #     values, attention = scaled_dot_product(q, k, v, mask=mask)
+    #     values = values.permute(0, 2, 1, 3)  # [Batch, SeqLen, Head, head_dim]
+    #     values = values.reshape(batch_size, seq_length, embed_dim) # combine the Head and head_dim by reshape
+    #     o = self.o_proj(values)
+
+    #     if return_attention:
+    #         return o, attention
+    #     else:
+    #         return o

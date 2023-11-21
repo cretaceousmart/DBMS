@@ -153,6 +153,9 @@ def str2bool(v):
 
 
 if __name__ == "__main__":
+
+    # TODO: improve how to use the parser here
+
     parser = argparse.ArgumentParser(description="Train Segmentation Model.")
 
     # Arguments for exp_args

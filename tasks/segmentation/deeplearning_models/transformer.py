@@ -225,7 +225,7 @@ class DecoderBlock(nn.Module):
         self.positionwise_feedforward = PositionwiseFeedforwardLayer(input_dim, feedforward_dim, dropout)
         self.dropout = nn.Dropout(dropout)
     
-    def forward(self, target, encoded_source, target_mask, source_mask):
+    def forward(self, encoded_source, target, source_mask, target_mask):
         _target = self.decoder_attention(target, target, target, target_mask)
         target = self.decoder_attention_layer_norm(target + self.dropout(_target))
 
@@ -284,7 +284,7 @@ class TransformerDecoder(nn.Module):
 
         # Pass through each of the decoder layers in sequence
         for layer in self.decoder_layers:
-            target, attention = layer(target, encoded_source, target_mask, source_mask)
+            target, attention = layer(encoded_source, target, source_mask, target_mask)
 
         # Apply the final fully connected layer to get logits of output_dim size
         output = self.fc_out(target)

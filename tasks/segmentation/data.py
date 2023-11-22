@@ -191,18 +191,27 @@ class BillboardDataset(Dataset):
     return chords, one_hot_labels
   
   @staticmethod
-  def collate_fn(batch: List[Tuple[np.array, np.array]]) -> Tuple[torch.tensor, torch.tensor, torch.tensor]:
+  def collate_fn(batch: List[Tuple[np.array, np.array]]) -> Tuple[torch.tensor, torch.tensor, torch.tensor, torch.tensor]:
     chords, labels = zip(*batch)
 
-    # 将 numpy 数组转换为 torch 张量，并进行填充以确保批次中所有样本的一致性
+    # Add padding (-1/0) to make sure the sequence length of all chord sequence/ section label sequence are the same
     chords = pad_sequence(map(torch.tensor, chords), batch_first=True, padding_value=-1).float()
     labels = pad_sequence(map(torch.tensor, labels), batch_first=True, padding_value=0)
 
     source_mask = (chords != -1)
 
-    trg_lens = torch.sum(labels != 0, dim=1)
-    max_len = trg_lens.max()
-    target_mask = (torch.arange(max_len).expand(len(labels), max_len) < trg_lens.unsqueeze(1)).bool()
+    # Calculate the target mask for decoder (combine of Padding mask and right shift mask)
+    seq_lens = torch.sum(labels.sum(dim=-1) != 0, dim=1)
+    max_len = labels.size(1)
+
+    right_shift_mask = torch.tril(torch.ones((max_len, max_len), dtype=torch.bool))
+    right_shift_mask = right_shift_mask[None, :seq_lens.max(), :seq_lens.max()]
+    
+    padding_mask = (torch.arange(max_len).expand(len(seq_lens), max_len) < seq_lens.unsqueeze(1)).unsqueeze(1)
+
+    
+    target_mask = right_shift_mask & padding_mask
+
 
     # Return: chord is source sequence, labels is target sequence
     return chords, labels, source_mask, target_mask

@@ -140,7 +140,7 @@ class MultiheadAttention(nn.Module):
 
         # Concatenate the heads
         values = values.permute(0, 2, 1, 3).contiguous()  # [Batch, SeqLen, Head, head_dim]
-        values = values.view(batch_size, -1, self.embed_dim)  # combine the Head and head_dim by reshape
+        values = values.view(batch_size, -1, self.embed_dim)  # combine the Head and head_dim by reshape:[Batch, Seqlen, ]
 
         # Apply final linear projection
         output = self.o_proj(values)
@@ -177,7 +177,7 @@ class EncoderBlock(nn.Module):
 
     def forward(self, x, mask=None):
         # Attention part
-        attn_out = self.self_attn(x, mask=mask)
+        attn_out = self.self_attn(x,x,x, mask=mask) #self-attention
         x = x + self.dropout(attn_out)
         x = self.norm1(x)
 
@@ -241,7 +241,7 @@ class DecoderBlock(nn.Module):
 class TransformerDecoder(nn.Module):
     def __init__(self,
                  input_dim, # 3 as default because a chord is encoded into a vector that length = 3, e.g. encode('C:maj') = [1024,8,0] (not accurate)
-                 output_dim,
+                 model_dim,
                  num_layers,
                  num_heads,
                  feedforward_dim,
@@ -251,11 +251,12 @@ class TransformerDecoder(nn.Module):
                  ):
         super().__init__()
 
-        self.device = device
-        self.position_embedding = PositionalEncoding(input_dim, decoder_max_length)
-        self.decoder_layers = nn.ModuleList([DecoderBlock(input_dim, num_heads, feedforward_dim, dropout)] for _ in range(num_layers))
+        self.model_device = device
+        # TODO: Figure out it's model_dim or input_dim
+        self.position_embedding = PositionalEncoding(model_dim, decoder_max_length)
+        self.decoder_layers = nn.ModuleList(DecoderBlock(input_dim, num_heads, feedforward_dim, dropout) for _ in range(num_layers))
 
-        self.fc_out = nn.Linear(input_dim, output_dim)
+        self.fc_out = nn.Linear(input_dim, model_dim)
         self.dropout = nn.Dropout(dropout)
         self.scale = torch.sqrt(torch.FloatTensor([input_dim])).to(device)
 
@@ -278,7 +279,7 @@ class TransformerDecoder(nn.Module):
         assert target.shape[2] == 3 #Check if we use root interval to encode the chord sequence
         
         # Calculate position indices and add positional encoding
-        pos = torch.arange(0, Seqlen).unsqueeze(0).repeat(batch_size, 1).to(self.device)
+        pos = torch.arange(0, Seqlen).unsqueeze(0).repeat(batch_size, 1).to(self.model_device)
         target = self.scale * target + self.position_embedding(pos)
         target = self.dropout(target)
 
@@ -333,7 +334,6 @@ class TransformerModel(BaseModel):
         # Extract the hyperparameter from segmentation_train_args
         # TODO: remove the arg that don't needed
         self.input_dim = segmentation_train_args.get("input_dim")
-        self.output_dim = segmentation_train_args.get("output_dim")
         self.model_dim = segmentation_train_args.get("model_dim")
         self.feedforward_dim = segmentation_train_args.get("feedforward_dim")
         self.num_classes = segmentation_train_args.get("num_classes")
@@ -341,7 +341,7 @@ class TransformerModel(BaseModel):
         self.num_layers = segmentation_train_args.get("num_layers")
         self.decoder_max_length = segmentation_train_args.get("decoder_max_length")
         
-        self.device = segmentation_train_args.get("device")
+        self.model_device = segmentation_train_args.get("device")
         self.lr = segmentation_train_args.get("lr")
         self.warmup = segmentation_train_args.get("warmup")
         self.max_iters = segmentation_train_args.get("max_iters")
@@ -353,10 +353,11 @@ class TransformerModel(BaseModel):
 
 
     def _create_model(self):
-        # Input dim -> Model dim
+        # Only being used in def input_net()
         self.input_net = nn.Sequential(
             nn.Dropout(self.input_dropout), nn.Linear(self.input_dim, self.model_dim)
         )
+
         # Positional encoding for sequences
         self.positional_encoding = PositionalEncoding(d_model=self.model_dim)
 
@@ -364,7 +365,7 @@ class TransformerModel(BaseModel):
         # Transformer Encoder
         self.transformer_encoder = TransformerEncoder(
             num_layers=self.num_layers,
-            input_dim=self.model_dim,
+            input_dim=self.input_dim,
             feedforward_dim=2 * self.model_dim,
             num_heads=self.num_heads,
             dropout=self.dropout,
@@ -372,13 +373,13 @@ class TransformerModel(BaseModel):
 
         # Transformer Decoder
         self.transformer_decoder = TransformerDecoder(
-            input_dim = self.model_dim, 
-            output_dim = self.model_dim,
+            input_dim = self.input_dim, 
+            model_dim = self.model_dim,
             num_layers = self.num_layers,
             num_heads = self.num_heads,
             feedforward_dim = self.feedforward_dim,
             dropout = self.dropout,
-            device = self.device,
+            device = self.model_device,
             decoder_max_length = self.decoder_max_length
         )
 
@@ -397,6 +398,7 @@ class TransformerModel(BaseModel):
         
         source, target, source_mask, target_mask = batch
         
+        # TODO: figure out a better way to add position information (note that: 不同的feature应该用不同的处理方法，例如chord和spectogram不应该用相同的方法)
         if add_positional_encoding:
             source = self.positional_encoding(source)
             target = self.positional_encoding(target)
@@ -407,14 +409,14 @@ class TransformerModel(BaseModel):
 
         output = self.output_net(output)
 
-        loss = F.cross_entropy(output.view(-1, output.shape[-1]), trg.view(-1), ignore_index=self.pad_idx)
+        loss = F.cross_entropy(output.view(-1, output.shape[-1]), target.view(-1), ignore_index=self.pad_idx)
 
         return output, loss
 
         
 
     @torch.no_grad()
-    def get_attention_maps(self, x, mask=None, add_positional_encoding=True):
+    def input_net(self, x, mask=None, add_positional_encoding=True):
         """Function for extracting the attention matrices of the whole Transformer for a single batch.
 
         Input arguments same as the forward pass.

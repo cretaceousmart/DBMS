@@ -9,8 +9,8 @@ import numpy as np
 import wandb
 import math 
 
-from mir_eval.util import boundaries_to_intervals
-from mir_eval.segment import pairwise, nce
+from externel_library.mir_eval_simple.mir_eval_segment import pairwise,nce
+from externel_library.mir_eval_simple.mir_eval_simple_utils import boundaries_to_intervals
 
 import torch.optim as optim
 
@@ -46,25 +46,25 @@ class PositionalEncoding(nn.Module):
 
 class PositionwiseFeedforwardLayer(nn.Module):
     """
-    Just a linear mapping to 'learn more infomation', input_dim -> feedforward_dim -> input_dim
+    Just a linear mapping to 'learn more infomation', model_dim -> feedforward_dim -> model_dim
     Params: 
-        - input_dim: input dimension of the model
+        - model_dim: input dimension of the model
         - feedforward_dim: dimension of inner layer, only being used in this function
         - dropout_rate: set as 0 as defult
     
         Return: shape of input and output are the same: [batch_size, Seqlen, ]
 
     """
-    def __init__(self, input_dim, feedforward_dim, dropout_rate):
+    def __init__(self, model_dim, feedforward_dim, dropout_rate):
         super().__init__()
-        self.fc_1 = nn.Linear(input_dim, feedforward_dim)
-        self.fc_2 = nn.Linear(feedforward_dim, input_dim)
+        self.fc_1 = nn.Linear(model_dim, feedforward_dim)
+        self.fc_2 = nn.Linear(feedforward_dim, model_dim)
         self.dropout = nn.Dropout(dropout_rate)
     
     def forward(self, x):
         x = self.dropout(torch.relu(self.fc_1(x))) #[batch size, Seqlen, pf_dim]
         x = self.fc_2(x)
-        return x #[batch size, Seqlen, input_dim]
+        return x #[batch size, Seqlen, model_dim]
 
 
 
@@ -95,8 +95,8 @@ class MultiheadAttention(nn.Module):
     def __init__(self, model_dim, embed_dim, num_heads):
         """
         Params:
-        - input_dim: Hidden dimensionality of the input
-        - embed_dim: we map the input_dim into 3 * embed_dim, but actually outside this function we set embed_dim = input_dim
+        - model_dim: Hidden dimensionality of the input
+        - embed_dim: we map the model_dim into 3 * embed_dim, but actually outside this function we set embed_dim = model_dim
         - num_head: number of headers
         """
         super().__init__()
@@ -130,7 +130,7 @@ class MultiheadAttention(nn.Module):
         
         batch_size, seq_length, embed_dim = query.size()
 
-        # shape: [batch_size, Seqlen, input_dim]
+        # shape: [batch_size, Seqlen, model_dim]
         Q = self.fc_q(query)
         K = self.fc_k(key)
         V = self.fc_v(value)
@@ -255,7 +255,6 @@ class TransformerDecoder(nn.Module):
         super().__init__()
 
         self.model_device = device
-        # TODO: Figure out it's model_dim or input_dim
         self.position_embedding = PositionalEncoding(model_dim=model_dim, max_len=decoder_max_length)
         self.decoder_layers = nn.ModuleList(DecoderBlock(model_dim, num_heads, feedforward_dim, dropout) for _ in range(num_layers))
 
@@ -330,7 +329,7 @@ class TransformerModel(BaseModel):
         
         # Extract the hyperparameter from segmentation_train_args
         # TODO: remove the arg that don't needed
-        self.input_dim = segmentation_train_args.get("input_dim")
+        self.source_input_dim = segmentation_train_args.get("source_input_dim")
         self.model_dim = segmentation_train_args.get("model_dim")
         self.feedforward_dim = segmentation_train_args.get("feedforward_dim")
         self.num_classes = segmentation_train_args.get("num_classes")
@@ -345,6 +344,8 @@ class TransformerModel(BaseModel):
         self.dropout = segmentation_train_args.get("dropout", 0.0)
         self.input_dropout = segmentation_train_args.get("input_dropout", 0.0)
 
+        self.pad_idx = segmentation_train_args.get("pad_idx", 0) #use 0 as padding
+
 
         self._create_model() # call this function to create a Transformer model object
 
@@ -352,11 +353,11 @@ class TransformerModel(BaseModel):
     def _create_model(self):
         # Only being used in def input_net()
         self.input_net = nn.Sequential(
-            nn.Dropout(self.input_dropout), nn.Linear(self.input_dim, self.model_dim)
+            nn.Dropout(self.input_dropout), nn.Linear(self.source_input_dim, self.model_dim)
         )
 
         # Add MLP between 
-        self.source_mapping = nn.Linear(self.input_dim, self.model_dim)
+        self.source_mapping = nn.Linear(self.source_input_dim, self.model_dim)
         self.target_mapping = nn.Linear(self.num_classes, self.model_dim)
 
         # Positional encoding for sequences
@@ -374,7 +375,6 @@ class TransformerModel(BaseModel):
 
         # Transformer Decoder
         self.transformer_decoder = TransformerDecoder(
-            input_dim = self.input_dim, 
             model_dim = self.model_dim,
             num_layers = self.num_layers,
             num_heads = self.num_heads,
@@ -405,10 +405,13 @@ class TransformerModel(BaseModel):
         - source_mask: 
         - target_mask:
         """
+        
+        original_target = target.clone()
+        class_indices = torch.argmax(original_target, dim=-1)
 
         # Map source and target to model dim
-        source = self.source_mapping(source)
-        target = self.target_mapping(target)
+        source = self.source_mapping(source.float())
+        target = self.target_mapping(target.float())
 
         # TODO: figure out a better way to add position information (note that: 不同的feature应该用不同的处理方法，例如chord和spectogram不应该用相同的方法)
         if add_positional_encoding:
@@ -420,10 +423,57 @@ class TransformerModel(BaseModel):
         output, _ = self.transformer_decoder(encoded_source, target , source_mask, target_mask)
 
         output = self.output_net(output)
-
-        loss = F.cross_entropy(output.view(-1, output.shape[-1]), target.view(-1), ignore_index=self.pad_idx)
+        
+        loss = F.cross_entropy(output.view(-1, 14), class_indices.view(-1), ignore_index=self.pad_idx)
 
         return output, loss
+
+
+    def _test(self, batch: Tuple[torch.tensor, torch.tensor, torch.tensor, torch.tensor]) -> Tuple[torch.tensor, Dict[str, float]]:
+        """
+        Perform the prediction step in the specified batch. When computing the loss
+        masked elements are ignored.
+
+        Args:
+            batch (Tuple[torch.tensor, torch.tensor, torch.tensor, torch.tensor]): 
+            Input batch in the form (data, labels, padding mask)
+
+        Returns:
+            Tuple[torch.tensor, Dict[str, float]]: The loss item and the dictionary of metrics
+        """
+        metrics = defaultdict(list)
+        chords, labels, source_mask, target_mask = batch
+        
+        with torch.no_grad():
+            pred, loss = self._predict((chords, labels, source_mask, target_mask))
+        
+            # 因为我们关心的是labels，所以需要转换为类别索引
+            labels_idx = labels.argmax(dim=-1)  # [batch_size, Seqlen+2]
+
+            for pi, yi, mi in zip(pred, labels_idx, target_mask):
+                valid_mask = mi.any(dim=-1)  # 沿第二维度压缩，获取有效的掩码
+                pi = pi[valid_mask].argmax(axis=-1).cpu().numpy()  # 对预测结果应用mask
+                yi = yi[valid_mask].cpu().numpy()  # 对实际标签应用mask
+
+                # Calculate the time interval, in our task there're len(yi) different interval
+                # e.g. when len(yi) = 2: intervals = [[0,1], [1,2]]
+                # Obviously in our task, pi and yi share the same interval
+                intervals = boundaries_to_intervals(np.arange(len(yi) + 1)) 
+
+                # Calculate Precision, Recall Rate, F1-Score by using Agreement matrix
+                precision, recall, f1 = pairwise(intervals, yi, intervals, pi)
+                metrics["p_precision"].append(precision)
+                metrics["p_recall"].append(recall)
+                metrics["p_f1"].append(f1)
+
+                # Caslculate S_u (under-segmentation score), S_o (over-segmentation score), and F1 for them 
+                over, under, under_over_f1 = nce(intervals, yi, intervals, pi)
+                metrics["under"] = under
+                metrics["over"] = over
+                metrics["under_over_f1"] = under_over_f1
+        
+        metrics = {k: np.mean(v) for k, v in metrics.items()}
+        return loss, metrics
 
         
 

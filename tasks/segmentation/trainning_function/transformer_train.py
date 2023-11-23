@@ -147,7 +147,7 @@ if __name__ == "__main__":
     parser.add_argument("--wandb_run_name", type=str, default="transformer_test_run", help="The run name for Weights & Biases tracking.")
     parser.add_argument("--out", type=str, default="/app/segmentation_out", help="Output path for saving the model checkpoints.")
 
-    parser.add_argument("--input_dim", type=int, default=3, help="Hidden dimensionality of the input.")
+    parser.add_argument("--source_input_dim", type=int, default=3, help="Hidden dimensionality of the input.")
     parser.add_argument("--model_dim", type=int, default=128, help="Hidden dimensionality to use inside the Transformer.")
     parser.add_argument("--feedforward_dim", type=int, default=256, help="Dimensionality of the feedforward network model.")
     parser.add_argument("--num_classes", type=int, default=14, help="Number of classes to predict per sequence element.")
@@ -185,7 +185,7 @@ if __name__ == "__main__":
         "wandb_run_name": args.wandb_run_name,
         "out": args.out,
 
-        "input_dim": args.input_dim,
+        "source_input_dim": args.source_input_dim,
         "model_dim": args.model_dim,
         "feedforward_dim": args.feedforward_dim,
         "num_classes": args.num_classes,

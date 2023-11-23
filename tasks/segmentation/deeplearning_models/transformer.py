@@ -67,27 +67,32 @@ class PositionwiseFeedforwardLayer(nn.Module):
         return x #[batch size, Seqlen, input_dim]
 
 
+
 def scaled_dot_product(q, k, v, mask=None):
-    """
-    input shape = output shape: [Batch, Head, SeqLen, self.head_dim]
-    """
     d_k = q.size()[-1]
     attn_logits = torch.matmul(q, k.transpose(-2, -1))
     attn_logits = attn_logits / math.sqrt(d_k)
 
-    batch_size, num_heads, seq_length, _  = attn_logits.shape
+    batch_size, num_heads, seq_length, _ = attn_logits.shape
 
     if mask is not None:
-        mask = mask.unsqueeze(1).unsqueeze(2)
-        mask = mask.expand(batch_size, num_heads, seq_length, seq_length)
+        if len(mask.shape) == 2:  # adjust the shape of source mask
+            mask = mask.unsqueeze(1).unsqueeze(1)  # [batch_size, 1, 1, seq_length]
+            mask = mask.expand(batch_size, num_heads, seq_length, -1)
+
+        elif len(mask.shape) == 3:  # adjuest the shape of target mask
+            mask = mask.unsqueeze(1)  # [batch_size, 1, seq_length + 2, seq_length + 2]
+            mask = mask.expand(batch_size, num_heads, -1, -1)
+
         attn_logits = attn_logits.masked_fill(mask == 0, -9e15)
 
-    attention = F.softmax(attn_logits, dim=-1) # Calculate the attention weight
-    values = torch.matmul(attention, v) 
+    attention = F.softmax(attn_logits, dim=-1)
+    values = torch.matmul(attention, v)
     return values, attention
 
+
 class MultiheadAttention(nn.Module):
-    def __init__(self, input_dim, embed_dim, num_heads):
+    def __init__(self, model_dim, embed_dim, num_heads):
         """
         Params:
         - input_dim: Hidden dimensionality of the input
@@ -103,13 +108,13 @@ class MultiheadAttention(nn.Module):
 
         # Stack all weight matrices 1...h together for efficiency
         # Note that in many implementations you see "bias=False" which is optional
-        self.qkv_proj = nn.Linear(input_dim, 3 * embed_dim)
+        self.qkv_proj = nn.Linear(model_dim, 3 * embed_dim)
         self.o_proj = nn.Linear(embed_dim, embed_dim)
 
         # Linear mapping for query, key, value
-        self.fc_q = nn.Linear(input_dim, input_dim)
-        self.fc_k = nn.Linear(input_dim, input_dim)
-        self.fc_v = nn.Linear(input_dim, input_dim)
+        self.fc_q = nn.Linear(model_dim, model_dim)
+        self.fc_k = nn.Linear(model_dim, model_dim)
+        self.fc_v = nn.Linear(model_dim, model_dim)
 
 
         self._reset_parameters()
@@ -208,28 +213,28 @@ class TransformerEncoder(nn.Module):
 
 class DecoderBlock(nn.Module):
     def __init__(self, 
-                 input_dim,
+                 model_dim,
                  num_heads,
                  feedforward_dim, 
                  dropout,
                  ):
         super().__init__()
         
-        self.decoder_attention_layer_norm = nn.LayerNorm(input_dim)
-        self.encoder_attention_layer_norm = nn.LayerNorm(input_dim)
-        self.ff_layer_norm = nn.LayerNorm(input_dim)
+        self.self_attention_layer_norm = nn.LayerNorm(model_dim)
+        self.cross_attention_layer_norm = nn.LayerNorm(model_dim)
+        self.ff_layer_norm = nn.LayerNorm(model_dim)
 
-        self.decoder_attention = MultiheadAttention(input_dim, input_dim, num_heads) 
-        self.encoder_attention = MultiheadAttention(input_dim, input_dim, num_heads)
-        self.positionwise_feedforward = PositionwiseFeedforwardLayer(input_dim, feedforward_dim, dropout)
+        self.self_attention = MultiheadAttention(model_dim, model_dim, num_heads) 
+        self.cross_attention = MultiheadAttention(model_dim, model_dim, num_heads)
+        self.positionwise_feedforward = PositionwiseFeedforwardLayer(model_dim, feedforward_dim, dropout)
         self.dropout = nn.Dropout(dropout)
     
     def forward(self, encoded_source, target, source_mask, target_mask):
-        _target = self.decoder_attention(target, target, target, target_mask)
-        target = self.decoder_attention_layer_norm(target + self.dropout(_target))
+        _target = self.self_attention(target, target, target, target_mask)
+        target = self.self_attention_layer_norm(target + self.dropout(_target))
 
-        _target, attention = self.encoder_attention(target, encoded_source, encoded_source, source_mask,return_attention = True)
-        target = self.encoder_attention_layer_norm(target + self.dropout(_target))
+        _target, attention = self.cross_attention(target, encoded_source, encoded_source, source_mask,return_attention = True)
+        target = self.cross_attention_layer_norm(target + self.dropout(_target))
 
         _target = self.positionwise_feedforward(target)
         target = self.ff_layer_norm(target + self.dropout(_target))
@@ -239,7 +244,6 @@ class DecoderBlock(nn.Module):
 
 class TransformerDecoder(nn.Module):
     def __init__(self,
-                 input_dim, # 3 as default because a chord is encoded into a vector that length = 3, e.g. encode('C:maj') = [1024,8,0] (not accurate)
                  model_dim,
                  num_layers,
                  num_heads,
@@ -253,11 +257,11 @@ class TransformerDecoder(nn.Module):
         self.model_device = device
         # TODO: Figure out it's model_dim or input_dim
         self.position_embedding = PositionalEncoding(model_dim=model_dim, max_len=decoder_max_length)
-        self.decoder_layers = nn.ModuleList(DecoderBlock(input_dim, num_heads, feedforward_dim, dropout) for _ in range(num_layers))
+        self.decoder_layers = nn.ModuleList(DecoderBlock(model_dim, num_heads, feedforward_dim, dropout) for _ in range(num_layers))
 
-        self.fc_out = nn.Linear(input_dim, model_dim)
+        self.fc_out = nn.Linear(model_dim, model_dim)
         self.dropout = nn.Dropout(dropout)
-        self.scale = torch.sqrt(torch.FloatTensor([input_dim])).to(device)
+        self.scale = torch.sqrt(torch.FloatTensor([model_dim])).to(device)
 
 
     def forward(self, encoded_source, target, source_mask, target_mask):
@@ -274,14 +278,8 @@ class TransformerDecoder(nn.Module):
             - attention: the attention matrix (batch_size, head, Seqlen, Seqlen) of encoder attention, may not useful
         """
         assert len(target.shape) == 3 #Check if the chord sequence satisfied [batch_size, Seqlen, emb_dim]
-        batch_size, Seqlen = target.shape[0], target.shape[1]
-        assert target.shape[2] == 3 #Check if we use root interval to encode the chord sequence
+        # batch_size, Seqlen = target.shape[0], target.shape[1]
         
-        # Calculate position indices and add positional encoding
-        pos = torch.arange(0, Seqlen).unsqueeze(0).repeat(batch_size, 1).to(self.model_device)
-        target = self.scale * target + self.position_embedding(pos)
-        target = self.dropout(target)
-
         # Pass through each of the decoder layers in sequence
         for layer in self.decoder_layers:
             target, attention = layer(encoded_source, target, source_mask, target_mask)
@@ -463,12 +461,23 @@ import torch
 import math
 from torch import nn
 import tasks.segmentation.deeplearning_models.transformer as Transformer
-------------------------------------------------------------------------------------------------------------
-[Test PositionalEncoding]
 
-model_dim = 128
+model_dim = 64
+feedforward_dim=128
 seq_length = 50
 batch_size = 5
+num_layers = 6
+num_heads = 2
+input_dim = 3
+
+positional_encoding = Transformer.PositionalEncoding(model_dim)
+dummy_source = torch.zeros(batch_size, seq_length, model_dim)
+dummy_target = torch.zeros(batch_size, seq_length+2, model_dim)
+dummy_source_mask = torch.zeros(batch_size, seq_length)
+dummy_target_mask = torch.zeros(batch_size, seq_length+2, seq_length+2)
+
+------------------------------------------------------------------------------------------------------------
+[Test PositionalEncoding]
 
 positional_encoding = Transformer.PositionalEncoding(model_dim)
 dummy_input = torch.zeros(batch_size, seq_length, model_dim)
@@ -482,7 +491,7 @@ pos_output = output
 enc_output = enc_blk(pos_output)
 assert pos_output.shape == enc_output.shape
 ------------------------------------------------------------------------------------------------------------
-[Test Encoding Layer]
+[Test Encoding Module]
 
 encoder = Transformer.TransformerEncoder(
     num_layers=num_layers,
@@ -496,6 +505,33 @@ encoder_output = encoder(output)
 
 assert output.shape == encoder_output.shape
 
+------------------------------------------------------------------------------------------------------------
+[Test Single Decoder Layer]
+position_embedding = Transformer.PositionalEncoding(model_dim=model_dim, max_len=500)
+pos_dummy_target = position_embedding(dummy_target)
+assert dummy_target.shape == pos_dummy_target.shape
+
+decoder = Transformer.DecoderBlock(model_dim=model_dim, num_heads=num_heads, feedforward_dim=feedforward_dim,dropout=0.0)
+
+decoder_output, _ = decoder(encoder_output, pos_dummy_target, dummy_source_mask, dummy_target_mask)
+
+print(encoder_output.shape)
+print(decoder_output.shape)
+------------------------------------------------------------------------------------------------------------
+[Test Decoder Module]
+decoder = Transformer.TransformerDecoder(
+                 model_dim,
+                 num_layers,
+                 num_heads,
+                 feedforward_dim,
+                 dropout=0.0,
+                 device='cpu',
+                 decoder_max_length=500
+                 )
+
+decoder_output, _ = decoder(encoder_output, dummy_target,dummy_source_mask,dummy_target_mask)
+
+decoder_output.shape
 
 """
 

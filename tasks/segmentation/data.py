@@ -4,11 +4,10 @@ from tqdm import tqdm
 import re
 import functools
 import string
-from more_itertools import flatten
 import os
 
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import OneHotEncoder
+# from sklearn.model_selection import train_test_split``
+# from sklearn.preprocessing import OneHotEncoder
 import torch
 from torch.utils.data import random_split, Dataset, DataLoader
 from torch.nn.utils.rnn import pad_sequence
@@ -21,7 +20,7 @@ from mir_eval.util import merge_labeled_intervals, adjust_intervals
 from harte.harte import Harte
 
 from pitchclass2vec.data import ChocoChordDataset
-from pitchclass2vec.pitchclass2vec import Pitchclass2VecModel
+# from pitchclass2vec.pitchclass2vec import Pitchclass2VecModel
 from pitchclass2vec.pitchclass2vec import NaiveEmbeddingModel
 
 SYMBOLS_RE = re.compile("[" + re.escape(string.punctuation) + "]")
@@ -192,13 +191,24 @@ class BillboardDataset(Dataset):
   
   @staticmethod
   def collate_fn(batch: List[Tuple[np.array, np.array]]) -> Tuple[torch.tensor, torch.tensor, torch.tensor, torch.tensor]:
+    """
+    Args:
+    - batch: a list of Tuple(chord, labels)
+
+    Return:
+    - chord: [batch_size, Seqlen, 3]
+    - labels: [batch_size, Seqlen+2, 14] (why +2: add <SOS> and <EOS>) (why 14: 14 differnet classes)
+    - source_mask: 
+    - target_mask:
+    """
+    
     chords, labels = zip(*batch)
 
     # Add padding (-1/0) to make sure the sequence length of all chord sequence/ section label sequence are the same
     chords = pad_sequence(map(torch.tensor, chords), batch_first=True, padding_value=-1).float()
     labels = pad_sequence(map(torch.tensor, labels), batch_first=True, padding_value=0)
 
-    source_mask = (chords != -1)
+    source_mask = (chords != -1).any(dim=-1)
 
     # Calculate the target mask for decoder (combine of Padding mask and right shift mask)
     seq_lens = torch.sum(labels.sum(dim=-1) != 0, dim=1)
@@ -221,7 +231,8 @@ class BillboardDataset(Dataset):
 class SegmentationDataModule(pl.LightningDataModule):
   def __init__(self, 
                dataset_cls: Dataset, 
-               embedding_model: Union[Pitchclass2VecModel, NaiveEmbeddingModel], 
+              #  embedding_model: Union[Pitchclass2VecModel, NaiveEmbeddingModel], 
+               embedding_model: NaiveEmbeddingModel, # Stop using the Pitchclass2VecModel atm
                batch_size: int = 32, test_size: float = 0.2, valid_size: float = 0.1, 
                test_mode: bool = False,
                full_chord: bool = False):
@@ -307,7 +318,7 @@ class SegmentationDataModule(pl.LightningDataModule):
 Test Code:
 -----------------------------------------
 from tasks.segmentation.data import BillboardDataset, SegmentationDataModule
-from pitchclass2vec import encoding, model
+from pitchclass2vec import encoding
 from pitchclass2vec.pitchclass2vec import NaiveEmbeddingModel
 
 encoder = encoding.RootIntervalDataset
@@ -323,25 +334,21 @@ data = SegmentationDataModule(  dataset_cls=BillboardDataset,
                                     full_chord = False
                                     )
 
-                                    
 data.prepare_data()
-train_loader = data.train_dataloader()
 
-for i, batch in enumerate(train_loader):
-    
-    chord, labels, mask = batch  # 添加了 mask
+train_dataloader  = data.train_dataloader()
 
-    print(f"Batch {i}:")
-    print(f"Chord size: {chord.size()}")
-    print(f"Labels size: {labels.size()}")
-    print(f"mask size: {mask.size()}")
+batch = next(iter(train_dataloader))
 
-    if i == 0:
-        break
+print(batch[0].shape)
+print(batch[1].shape)
+print(batch[2].shape)
+print(batch[3].shape)
 -----------------------------------------
 Output:
 -----------------------------------------
-Chord size: torch.Size([5, 273, 3])
-Labels size: torch.Size([5, 273, 11])
-mask size: torch.Size([5, 273])
+torch.Size([5, 222, 3])
+torch.Size([5, 224, 14])
+torch.Size([5, 222])
+torch.Size([5, 224, 224])
 """

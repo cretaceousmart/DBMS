@@ -1,6 +1,5 @@
 from typing import Tuple, Dict
 from collections import defaultdict
-from pytorch_lightning.utilities.seed import seed_everything
 import pytorch_lightning as pl
 import torch.nn as nn
 import torch
@@ -19,7 +18,7 @@ from tasks.segmentation.deeplearning_models.base import BaseModel
 
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=5000):
+    def __init__(self, model_dim, max_len=5000):
         """Positional Encoding. shape of input and output are the same
         TODO: may need a new way for position encoding
         Args:
@@ -29,9 +28,9 @@ class PositionalEncoding(nn.Module):
         super().__init__()
 
         # Create matrix of [SeqLen, HiddenDim] representing the positional encoding for max_len inputs
-        pe = torch.zeros(max_len, d_model)
+        pe = torch.zeros(max_len, model_dim)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        div_term = torch.exp(torch.arange(0, model_dim, 2).float() * (-math.log(10000.0) / model_dim))
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         pe = pe.unsqueeze(0)
@@ -153,11 +152,11 @@ class MultiheadAttention(nn.Module):
 
 
 class EncoderBlock(nn.Module):
-    def __init__(self, input_dim, num_heads, feedforward_dim, dropout=0.0):
+    def __init__(self, model_dim, num_heads, feedforward_dim, dropout=0.0):
         """EncoderBlock.
 
         Args:
-            input_dim: Dimensionality of the input
+            model_dim: Dimensionality of the input (after Jie's first linear mapping and positional embedding)
             num_heads: Number of heads to use in the attention block
             feedforward_dim: Dimensionality of the hidden layer in the MLP
             dropout: Dropout probability to use in the dropout layers
@@ -166,13 +165,13 @@ class EncoderBlock(nn.Module):
 
         # Attention layer
         # TODO: change the code below since definition of MultiheadAttention is changed
-        self.self_attn = MultiheadAttention(input_dim, input_dim, num_heads)
+        self.self_attn = MultiheadAttention(model_dim, model_dim, num_heads)
 
-        self.linear_net = PositionwiseFeedforwardLayer(input_dim, feedforward_dim, dropout)
+        self.linear_net = PositionwiseFeedforwardLayer(model_dim, feedforward_dim, dropout)
 
         # Layers to apply in between the main layers
-        self.norm1 = nn.LayerNorm(input_dim)
-        self.norm2 = nn.LayerNorm(input_dim)
+        self.norm1 = nn.LayerNorm(model_dim)
+        self.norm2 = nn.LayerNorm(model_dim)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, mask=None):
@@ -253,7 +252,7 @@ class TransformerDecoder(nn.Module):
 
         self.model_device = device
         # TODO: Figure out it's model_dim or input_dim
-        self.position_embedding = PositionalEncoding(model_dim, decoder_max_length)
+        self.position_embedding = PositionalEncoding(model_dim=model_dim, max_len=decoder_max_length)
         self.decoder_layers = nn.ModuleList(DecoderBlock(input_dim, num_heads, feedforward_dim, dropout) for _ in range(num_layers))
 
         self.fc_out = nn.Linear(input_dim, model_dim)
@@ -358,15 +357,19 @@ class TransformerModel(BaseModel):
             nn.Dropout(self.input_dropout), nn.Linear(self.input_dim, self.model_dim)
         )
 
+        # Add MLP between 
+        self.source_mapping = nn.Linear(self.input_dim, self.model_dim)
+        self.target_mapping = nn.Linear(self.num_classes, self.model_dim)
+
         # Positional encoding for sequences
-        self.positional_encoding = PositionalEncoding(d_model=self.model_dim)
+        self.positional_encoding = PositionalEncoding(model_dim=self.model_dim)
 
 
         # Transformer Encoder
         self.transformer_encoder = TransformerEncoder(
             num_layers=self.num_layers,
-            input_dim=self.input_dim,
-            feedforward_dim=2 * self.model_dim,
+            model_dim=self.model_dim,
+            feedforward_dim=self.feedforward_dim,
             num_heads=self.num_heads,
             dropout=self.dropout,
         )
@@ -397,7 +400,18 @@ class TransformerModel(BaseModel):
     def _predict(self, batch: Tuple[torch.tensor, torch.tensor, torch.tensor], add_positional_encoding=True) -> Tuple[torch.tensor, torch.tensor]:
         
         source, target, source_mask, target_mask = batch
-        
+        """
+        Args: 
+        - source: A batch of chord sequence: [batch_size, Seqlen, 3] (why 3: each chord is encode into a length=3 vector)
+        - target: A batch of target sequence:[batch_size, Seqlen, 14] (why 14: 14 different class)
+        - source_mask: 
+        - target_mask:
+        """
+
+        # Map source and target to model dim
+        source = self.source_mapping(source)
+        target = self.target_mapping(target)
+
         # TODO: figure out a better way to add position information (note that: 不同的feature应该用不同的处理方法，例如chord和spectogram不应该用相同的方法)
         if add_positional_encoding:
             source = self.positional_encoding(source)
@@ -441,7 +455,49 @@ class TransformerModel(BaseModel):
         self.lr_scheduler.step()  # Step per iteration
 
 
+"""
+Test Code:
+------------------------------------------------------------------------------------------------------------
+import unittest
+import torch
+import math
+from torch import nn
+import tasks.segmentation.deeplearning_models.transformer as Transformer
+------------------------------------------------------------------------------------------------------------
+[Test PositionalEncoding]
 
+model_dim = 128
+seq_length = 50
+batch_size = 5
+
+positional_encoding = Transformer.PositionalEncoding(model_dim)
+dummy_input = torch.zeros(batch_size, seq_length, model_dim)
+
+output = positional_encoding(dummy_input)
+assert output.shape == dummy_input.shape
+------------------------------------------------------------------------------------------------------------
+[Test Signal Encoding Block]
+
+pos_output = output
+enc_output = enc_blk(pos_output)
+assert pos_output.shape == enc_output.shape
+------------------------------------------------------------------------------------------------------------
+[Test Encoding Layer]
+
+encoder = Transformer.TransformerEncoder(
+    num_layers=num_layers,
+    model_dim=model_dim,
+    feedforward_dim=2 * model_dim,
+    num_heads=num_heads,
+    dropout=0.0,
+)
+
+encoder_output = encoder(output)
+
+assert output.shape == encoder_output.shape
+
+
+"""
 
 
 # Legacy Code:

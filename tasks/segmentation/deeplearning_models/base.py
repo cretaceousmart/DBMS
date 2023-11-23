@@ -1,6 +1,5 @@
 from typing import Tuple, Dict
 from collections import defaultdict
-from pytorch_lightning.utilities.seed import seed_everything
 import pytorch_lightning as pl
 import torch.nn as nn
 import torch

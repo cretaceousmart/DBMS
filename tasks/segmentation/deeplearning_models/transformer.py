@@ -429,6 +429,7 @@ class TransformerModel(BaseModel):
         return output, loss
 
 
+
     def _test(self, batch: Tuple[torch.tensor, torch.tensor, torch.tensor, torch.tensor]) -> Tuple[torch.tensor, Dict[str, float]]:
         """
         Perform the prediction step in the specified batch. When computing the loss
@@ -501,6 +502,31 @@ class TransformerModel(BaseModel):
     def optimizer_step(self, *args, **kwargs):
         super().optimizer_step(*args, **kwargs)
         self.lr_scheduler.step()  # Step per iteration
+
+
+    def generate_sequence(self, source_seq):
+        batch_size, seq_length, _ = source_seq.shape
+        source_seq = self.source_mapping(source_seq.float())
+        source_seq = self.positional_encoding(source_seq)
+        encoded_source = self.transformer_encoder(source_seq)
+
+        # 初始化target_seq为一个全0的tensor，形状与source_seq相同
+        target_seq = torch.zeros((batch_size, seq_length), dtype=torch.long).to(self.model_device)
+
+        for i in range(seq_length):
+            target_mapped = self.target_mapping(F.one_hot(target_seq, num_classes=self.num_classes).float())
+            target_mapped = self.positional_encoding(target_mapped)
+
+            output, _ = self.transformer_decoder(encoded_source, target_mapped, source_mask=None, target_mask=None)
+            output = self.output_net(output)
+
+            # 获取每个时间步的预测结果
+            next_item = output[:, i, :].argmax(dim=-1)
+            target_seq[:, i] = next_item
+
+        return target_seq
+
+
 
 
 """
